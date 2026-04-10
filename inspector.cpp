@@ -1,6 +1,6 @@
 #include <iostream>
 #include <string.h>
-//#include <wchar.h>
+#include <vector>
 
 #include "Windows.h"
 #include "Psapi.h"
@@ -13,6 +13,21 @@ namespace inspector {
 		std::cout << "Hello" << std::endl;
 	}
 
+	std::vector<DWORD> enum_processes() {
+		std::vector<DWORD> processes{};
+		DWORD aProcesses[1024];
+		DWORD cbNeeded{ 0 };
+		if (!EnumProcesses(aProcesses, sizeof(aProcesses), &cbNeeded)) {
+			// cout << "Error while enumerating processes" << endl;
+			return processes;
+		}
+
+		// Calculate how many process identifiers were returned.
+		DWORD cProcesses = cbNeeded / sizeof(DWORD);
+		processes = std::vector<DWORD>(aProcesses, aProcesses + cProcesses);
+		return processes;
+	}
+
 	void print_process_name_and_id(DWORD processID) {
 
 		HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
@@ -20,16 +35,14 @@ namespace inspector {
 			processID);
 
 		if (!hProcess) {
-			std::cout << "Error while opening process" << std::endl;
+			//std::cout << GetLastError() << std::endl;
+			// std::cout << "Error while opening process" << std::endl;
 			return;
 		}
 		wchar_t path[512];
 		DWORD size = sizeof(path) / sizeof(wchar_t);
 		if (QueryFullProcessImageNameW(hProcess, FALSE, path, &size)) {
 			std::wcout << L"PID: " << processID << L" | " << path << std::endl;
-			/*if (wcsstr(path, L"TestTarget")) {
-				std::wcout << L"PID: " << processID << L" | " << path << std::endl;
-			}*/
 		}
 
 		CloseHandle(hProcess);

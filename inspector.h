@@ -1,9 +1,12 @@
 #pragma once
 
 #include "Windows.h"
+#include <vector>
 
 namespace inspector {
 	void hello();
+
+	std::vector<DWORD> enum_processes();
 
 	void print_process_name_and_id(DWORD processID);
 

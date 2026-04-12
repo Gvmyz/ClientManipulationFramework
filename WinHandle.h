@@ -24,6 +24,7 @@ public:
 	// Get back the raw HANDLE 
 	HANDLE get() const noexcept;
 	bool valid() const noexcept;
+	operator bool() const noexcept;
 
 	void reset(HANDLE handle = nullptr) noexcept;
 

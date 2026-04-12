@@ -1,54 +1,37 @@
 #include <iostream>
 #include <string.h>
 #include <vector>
+#include <array>
+#include <optional>
 
 #include "Windows.h"
 #include "Psapi.h"
 
 #include "inspector.h"
+#include "WinHandle.h"
+#include "Process.h"
 
 
-namespace inspector {
+namespace PT {
 	void hello() {
 		std::cout << "Hello" << std::endl;
 	}
 
-	std::vector<DWORD> enum_processes() {
-		std::vector<DWORD> processes{};
-		DWORD aProcesses[1024];
-		DWORD cbNeeded{ 0 };
-		if (!EnumProcesses(aProcesses, sizeof(aProcesses), &cbNeeded)) {
-			// cout << "Error while enumerating processes" << endl;
-			return processes;
-		}
-
-		// Calculate how many process identifiers were returned.
-		DWORD cProcesses = cbNeeded / sizeof(DWORD);
-		processes = std::vector<DWORD>(aProcesses, aProcesses + cProcesses);
-		return processes;
+	std::vector<DWORD> get_processes() {
+		return Process::list_processes();
 	}
 
-	void print_process_name_and_id(DWORD processID) {
-
-		HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
-			FALSE,
-			processID);
-
-		if (!hProcess) {
-			//std::cout << GetLastError() << std::endl;
-			// std::cout << "Error while opening process" << std::endl;
-			return;
-		}
-		wchar_t path[512];
-		DWORD size = sizeof(path) / sizeof(wchar_t);
-		if (QueryFullProcessImageNameW(hProcess, FALSE, path, &size)) {
-			std::wcout << L"PID: " << processID << L" | " << path << std::endl;
-		}
-
-		CloseHandle(hProcess);
+	std::optional<std::wstring> get_process_image_path(DWORD processId) {
+		return Process::get_image_path(processId);
 	}
 
-	// Proc Inspect => PID, image path, ...
+	WinHandle open_process(DWORD pid) {
+		return Process::open_process(pid);
+	}
+
+
+
+
 
 	// Get back a vector<ModuleInfo>
 	// Need to learn the privileges to list the modules
@@ -80,10 +63,14 @@ namespace inspector {
 	}
 
 	// Get back a vector<MemoryRegionInfo>
-	void enumerate_memory_regions(HANDLE hProcess) {
+	/*std::vec enumerate_memory_regions(const WinHandle& proc) {
+		if (proc.valid()) {
+			std::cerr << "Invalid process handle\n";
+			return;
+		}
 		MEMORY_BASIC_INFORMATION mbi{};
 		unsigned char* addr = nullptr;
-		while (VirtualQueryEx(hProcess, addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+		while (VirtualQueryEx(proc.get(), addr, &mbi, sizeof(mbi)) == sizeof(mbi)) {
 			std::cout << "BaseAddress: 0x" << std::hex
 				<< reinterpret_cast<std::uintptr_t>(mbi.BaseAddress) << '\n';
 
@@ -99,30 +86,23 @@ namespace inspector {
 
 			addr = static_cast<unsigned char*>(mbi.BaseAddress) + mbi.RegionSize;
 		}
-	}
+	}*/
 
-	void proc_inspect(DWORD pid) {
-		print_process_name_and_id(pid);
+	void proc_inspect(int pid) {
+		//print_process_name_and_id(pid);
 
-		HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
-			FALSE,
-			pid);
-
-		if (!hProcess) {
-			std::cout << "Error while opening process" << std::endl;
-			return;
-		}
+		WinHandle process = Process::open_process(static_cast<DWORD>(pid));
 
 		HMODULE hMod;
 		DWORD cbNeeded;
 		wchar_t baseName[512];
 
-		if (EnumProcessModules(hProcess, &hMod, sizeof(hMod), &cbNeeded)) {
-			GetModuleBaseNameW(hProcess, hMod, baseName, 512);
+		if (EnumProcessModules(process.get(), &hMod, sizeof(hMod), &cbNeeded)) {
+			GetModuleBaseNameW(process.get(), hMod, baseName, 512);
 			std::wcout << baseName << std::endl;
 		}
 
-		enumerate_modules(hProcess);
+		enumerate_modules(process.get());
 
 		// For feature 1
 		// Get module information => Base address + size for all modules

@@ -2,15 +2,22 @@
 
 #include "Windows.h"
 #include <vector>
+#include <optional>
 
-namespace inspector {
+#include "WinHandle.h"
+
+namespace PT {
 	void hello();
 
-	std::vector<DWORD> enum_processes();
+	std::vector<DWORD> get_processes();
 
-	void print_process_name_and_id(DWORD processID);
+	WinHandle open_process(DWORD pid);
+
+	std::optional<std::wstring> get_process_image_path(DWORD processId);
 
 	void enumerate_modules(HANDLE process);
+
+	std::vector<MEMORY_BASIC_INFORMATION> get_memory_infos(HANDLE hProcess);
 
 	void proc_inspect(int pid);
 }

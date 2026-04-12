@@ -5,26 +5,74 @@
 
 #include "inspector.h"
 #include "window.h"
-#include <vector>
+#include "Memory.h"
+#include <vector>	
+#include "WinHandle.h"
+#include <string_view>
 
 
+void print_memory_info(const PT::MemoryInfo& mbi) {
+	std::cout << "BaseAddress: 0x" << std::hex
+		<< mbi.base_address << '\n';
+	std::cout << "AllocationBase: 0x"
+		<< mbi.allocation_base << '\n';
+	std::cout << "RegionSize: " << std::dec
+		<< mbi.region_size << '\n';
+	std::cout << "State: " << PT::Memory::get_state_name(mbi.state) << '\n';
+	std::cout << "Protect: " << PT::Memory::get_protect_name(mbi.protect) << '\n';
+	std::cout << "Type: " << PT::Memory::get_type_name(mbi.type) << "\n\n";
+}
+
+void print_memory_infos(const std::vector<PT::MemoryInfo>& memory_infos) {
+	for (const auto& mbi : memory_infos) {
+		print_memory_info(mbi);
+	}
+}
 
 
-int main(int charc, char** argv) {
-	//return run(charc, argv); 
-	using namespace std;
+int main(int argc, char** argv) {
+	const unsigned int ppid = 20736;
+	const std::uintptr_t address = 0x00000089752FF850ULL;
+
+	//return run(charc, argv); // ImGui
 	std::cout << "Hello world" << std::endl;
 
-	std::vector<DWORD> processes = inspector::enum_processes();
+	const auto processes = PT::get_processes();
 
 	// Print the name and process identifier for each process.
-	for (auto p : processes) {
-		if (p != 0) {
-			inspector::print_process_name_and_id(p);
+	for (const auto pid : processes) {
+		if (const auto path = PT::get_process_image_path(pid)) {
+			std::wcout << L"PID: " << pid << L" | " << *path << L'\n';
 		}
 	}
 
-	//inspector::proc_inspect(15048);
+	auto proc = PT::open_process(ppid);
+	if (!proc) {
+		std::cerr << "Failed to open process\n";
+		return 1;
+	}
+	std::cout << "[+] Successfully opened process " << ppid << "\n";
+
+	const auto memory_infos = PT::Memory::get_memory_infos(proc);
+
+	print_memory_infos(memory_infos);
+
+	std::byte buf[4]{};
+	SIZE_T bytesRead = 0;
+
+	if (const auto mbi = PT::Memory::get_memory_info(proc, address)) {
+		print_memory_info(*mbi);
+	}
+
+	if (ReadProcessMemory(proc.get(), reinterpret_cast<LPCVOID>(address), buf, sizeof(buf), &bytesRead)) {
+		int value = *reinterpret_cast<int*>(buf);
+		std::cout << "Value at address 0x" << std::hex << address << ": " << std::dec << value << '\n';
+	}
+	else {
+		std::cerr << "Failed to read memory " << GetLastError() << '\n';
+	}
+
+	std::cout << "Bytes read: " << bytesRead << '\n';
 
 	return 0;
 }

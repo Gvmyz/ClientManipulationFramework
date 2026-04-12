@@ -29,20 +29,20 @@ bool WinHandle::valid() const noexcept {
 	return (handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE);
 }
 
+WinHandle::operator bool() const noexcept {
+	return valid();
+}
+
 void WinHandle::reset(HANDLE handle) noexcept {
 	if (valid()) {
 		CloseHandle(handle_);
-		handle_ = handle;
 	}
+	handle_ = handle;
 }
 
 // Might need rework?
 HANDLE WinHandle::release() noexcept {
-	if (valid()) {
-		HANDLE res = handle_;
-		//CloseHandle(handle_);
-		handle_ = nullptr;
-		return res;
-	}
-	return nullptr;
+	HANDLE temp = handle_;
+	handle_ = nullptr;
+	return temp;
 }

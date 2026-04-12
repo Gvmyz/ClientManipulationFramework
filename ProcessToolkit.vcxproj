@@ -140,6 +140,8 @@
     <ClCompile Include="external\imgui\imgui_widgets.cpp" />
     <ClCompile Include="inspector.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="Memory.cpp" />
+    <ClCompile Include="Privileges.cpp" />
     <ClCompile Include="Process.cpp" />
     <ClCompile Include="window.cpp" />
     <ClCompile Include="WinHandle.cpp" />
@@ -154,6 +156,8 @@
     <ClInclude Include="external\imgui\imstb_textedit.h" />
     <ClInclude Include="external\imgui\imstb_truetype.h" />
     <ClInclude Include="inspector.h" />
+    <ClInclude Include="Memory.h" />
+    <ClInclude Include="Privileges.h" />
     <ClInclude Include="Process.h" />
     <ClInclude Include="window.h" />
     <ClInclude Include="WinHandle.h" />

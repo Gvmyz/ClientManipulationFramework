@@ -92,10 +92,11 @@ namespace PT {
 		//print_process_name_and_id(pid);
 
 		WinHandle process = Process::open_process(static_cast<DWORD>(pid));
+		if (!process) return;
 
-		HMODULE hMod;
-		DWORD cbNeeded;
-		wchar_t baseName[512];
+		HMODULE hMod = nullptr;
+		DWORD cbNeeded = 0;
+		wchar_t baseName[512] = {};
 
 		if (EnumProcessModules(process.get(), &hMod, sizeof(hMod), &cbNeeded)) {
 			GetModuleBaseNameW(process.get(), hMod, baseName, 512);

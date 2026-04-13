@@ -59,12 +59,7 @@ namespace PT {
 			return (mi.protect & readable_flags) != 0;
 		}
 
-		template<typename T>
-		bool read_memory(const WinHandle& process, std::uintptr_t address, T& out) {
-			if (!process) return false;
-			SIZE_T bytesRead = 0;
-			return ReadProcessMemory(process.get(), reinterpret_cast<LPCVOID>(address), &out, sizeof(T), &bytesRead) && bytesRead == sizeof(T);
-		}
+
 
 		const std::string_view get_state_name(DWORD state) {
 			switch (state) {

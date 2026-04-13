@@ -9,6 +9,7 @@
 #include <vector>	
 #include "WinHandle.h"
 #include <string_view>
+#include "Process.h"
 
 
 void print_memory_info(const PT::MemoryInfo& mbi) {
@@ -46,7 +47,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	auto proc = PT::open_process(ppid);
+	auto proc = PT::Process::open_process(ppid, PROCESS_ALL_ACCESS);
 	if (!proc) {
 		std::cerr << "Failed to open process\n";
 		return 1;
@@ -57,6 +58,7 @@ int main(int argc, char** argv) {
 
 	print_memory_infos(memory_infos);
 
+	int t = 0;
 	std::byte buf[4]{};
 	SIZE_T bytesRead = 0;
 
@@ -64,15 +66,22 @@ int main(int argc, char** argv) {
 		print_memory_info(*mbi);
 	}
 
-	if (ReadProcessMemory(proc.get(), reinterpret_cast<LPCVOID>(address), buf, sizeof(buf), &bytesRead)) {
-		int value = *reinterpret_cast<int*>(buf);
-		std::cout << "Value at address 0x" << std::hex << address << ": " << std::dec << value << '\n';
+	if (PT::Memory::read_memory<int>(proc, address, t)) {
+		std::cout << "Value at address 0x" << std::hex << address << ": " << std::dec << t << '\n';
 	}
 	else {
 		std::cerr << "Failed to read memory " << GetLastError() << '\n';
 	}
 
 	std::cout << "Bytes read: " << bytesRead << '\n';
+
+	std::cout << "Now writing...\n";
+	if (PT::Memory::write_memory<int>(proc, address, 1336)) {
+		std::cout << "Successfully wrote to memory\n";
+	}
+	else {
+		std::cerr << "Failed to write memory " << GetLastError() << '\n';
+	}
 
 	return 0;
 }

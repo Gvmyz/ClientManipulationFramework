@@ -30,9 +30,21 @@ namespace PT {
 		// Query a single region containing address; returns std::optional<MemoryInfo>
 		std::optional<MemoryInfo> get_memory_info(const WinHandle& process, std::uintptr_t address);
 
+		// Change to std::optional<int>
 		// Templated safe reader : returns true on success and writes to out
 		template<typename T>
-		bool read_memory(const WinHandle& process, std::uintptr_t address, T& out);
+		bool read_memory(const WinHandle& process, std::uintptr_t address, T& out) {
+			if (!process) return false;
+			SIZE_T bytesRead = 0;
+			return ReadProcessMemory(process.get(), reinterpret_cast<LPCVOID>(address), &out, sizeof(T), &bytesRead) && bytesRead == sizeof(T);
+		}
+
+		template<typename T>
+		bool write_memory(const WinHandle& process, std::uintptr_t address, const T& value) {
+			if (!process) return false;
+			SIZE_T bytesWritten = 0;
+			return WriteProcessMemory(process.get(), reinterpret_cast<LPVOID>(address), &value, sizeof(T), &bytesWritten) && bytesWritten == sizeof(T);
+		}
 
 		// Check if a region is readable (simple check using protect flags)
 		bool is_readable(const MemoryInfo& mi);

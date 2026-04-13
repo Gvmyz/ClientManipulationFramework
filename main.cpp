@@ -30,14 +30,7 @@ void print_memory_infos(const std::vector<PT::MemoryInfo>& memory_infos) {
 	}
 }
 
-
-int main(int argc, char** argv) {
-	const unsigned int ppid = 20736;
-	const std::uintptr_t address = 0x00000089752FF850ULL;
-
-	//return run(charc, argv); // ImGui
-	std::cout << "Hello world" << std::endl;
-
+void print_processes() {
 	const auto processes = PT::get_processes();
 
 	// Print the name and process identifier for each process.
@@ -46,6 +39,12 @@ int main(int argc, char** argv) {
 			std::wcout << L"PID: " << pid << L" | " << *path << L'\n';
 		}
 	}
+}
+
+
+int main(int argc, char** argv) {
+	const unsigned int ppid = 20736;
+	const std::uintptr_t address = 0x00000089752FF850ULL;
 
 	auto proc = PT::Process::open_process(ppid, PROCESS_ALL_ACCESS);
 	if (!proc) {
@@ -54,35 +53,34 @@ int main(int argc, char** argv) {
 	}
 	std::cout << "[+] Successfully opened process " << ppid << "\n";
 
-	const auto memory_infos = PT::Memory::get_memory_infos(proc);
+	auto allocated = PT::Memory::allocate_memory(proc, 4096);
+	if (!allocated) {
+		std::cerr << "Failed to allocate memory\n";
+		std::cerr << GetLastError() << "\n";
+		return 1;
+	}
+	std::cout << "[+] Successfully allocated memory at 0x" << std::hex << *allocated << "\n";
 
-	print_memory_infos(memory_infos);
-
-	int t = 0;
-	std::byte buf[4]{};
-	SIZE_T bytesRead = 0;
-
-	if (const auto mbi = PT::Memory::get_memory_info(proc, address)) {
-		print_memory_info(*mbi);
+	std::cout << "\n[*]Memory region in the target process:\n";
+	if (auto mem = PT::Memory::get_memory_info(proc, *allocated)) {
+		print_memory_info(*mem);
+	} else {
+		std::cerr << "Failed to get memory info\n";
 	}
 
-	if (PT::Memory::read_memory<int>(proc, address, t)) {
-		std::cout << "Value at address 0x" << std::hex << address << ": " << std::dec << t << '\n';
-	}
-	else {
-		std::cerr << "Failed to read memory " << GetLastError() << '\n';
-	}
-
-	std::cout << "Bytes read: " << bytesRead << '\n';
-
-	std::cout << "Now writing...\n";
-	if (PT::Memory::write_memory<int>(proc, address, 1336)) {
-		std::cout << "Successfully wrote to memory\n";
-	}
-	else {
-		std::cerr << "Failed to write memory " << GetLastError() << '\n';
+	if (PT::Memory::free_memory(proc, *allocated, 0, MEM_RELEASE)) {
+		std::cout << "[+] Successfully freed memory at 0x" << std::hex << *allocated << "\n";
+	} else {
+		std::cerr << "Failed to free memory\n";
+		std::cerr << GetLastError() << "\n";
 	}
 
+	std::cout << "\n[*]Memory region in the target process:\n";
+	if (auto mem = PT::Memory::get_memory_info(proc, *allocated)) {
+		print_memory_info(*mem);
+	} else {
+		std::cerr << "Failed to get memory info\n";
+	}
 	return 0;
 }
 

@@ -63,29 +63,29 @@ namespace PT {
 
 		const std::string_view get_state_name(DWORD state) {
 			switch (state) {
-			case MEM_COMMIT: return "Committed";
-			case MEM_FREE: return "Free";
-			case MEM_RESERVE: return "Reserved";
-			default: return "Unknown";
+				case MEM_COMMIT: return "Committed";
+				case MEM_FREE: return "Free";
+				case MEM_RESERVE: return "Reserved";
+				default: return "Unknown";
 			}
 		}
 		const std::string_view get_protect_name(DWORD protect) {
 			switch (protect) {
-			case PAGE_NOACCESS: return "No Access";
-			case PAGE_READONLY: return "Read-Only";
-			case PAGE_READWRITE: return "Read/Write";
-			case PAGE_EXECUTE: return "Execute";
-			case PAGE_EXECUTE_READ: return "Execute/Read";
-			case PAGE_EXECUTE_READWRITE: return "Execute/Read/Write";
-			default: return "Unknown";
+				case PAGE_NOACCESS: return "No Access";
+				case PAGE_READONLY: return "Read-Only";
+				case PAGE_READWRITE: return "Read/Write";
+				case PAGE_EXECUTE: return "Execute";
+				case PAGE_EXECUTE_READ: return "Execute/Read";
+				case PAGE_EXECUTE_READWRITE: return "Execute/Read/Write";
+				default: return "Unknown";
 			}
 		}
 		const std::string_view get_type_name(DWORD type) {
 			switch (type) {
-			case MEM_IMAGE: return "Image";
-			case MEM_MAPPED: return "Mapped";
-			case MEM_PRIVATE: return "Private";
-			default: return "Unknown";
+				case MEM_IMAGE: return "Image";
+				case MEM_MAPPED: return "Mapped";
+				case MEM_PRIVATE: return "Private";
+				default: return "Unknown";
 			}
 		}
 		std::vector<MemoryInfo> filter_committed_regions(std::vector<MemoryInfo> mem_infos) {
@@ -116,6 +116,19 @@ namespace PT {
 			}
 			return results;
 		}
-	}
 
+		std::optional<std::uintptr_t> allocate_memory(const WinHandle& process, std::size_t size, DWORD allocation_type, DWORD protect) {
+			if (!process) return std::nullopt;
+			LPVOID addr = VirtualAllocEx(process.get(), nullptr, size, allocation_type, protect);
+			if (!addr) {
+				return std::nullopt;
+			}
+			return reinterpret_cast<std::uintptr_t>(addr);
+		}
+
+		bool free_memory(const WinHandle& process, std::uintptr_t address, std::size_t size, DWORD free_type) {
+			if (!process) return false;
+			return VirtualFreeEx(process.get(), reinterpret_cast<LPVOID>(address), size, free_type) != 0;
+		}
+	}
 }

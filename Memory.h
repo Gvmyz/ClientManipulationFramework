@@ -33,18 +33,23 @@ namespace PT {
 		// Change to std::optional<int>
 		// Templated safe reader : returns true on success and writes to out
 		template<typename T>
-		bool read_memory(const WinHandle& process, std::uintptr_t address, T& out) {
+		bool read_trivial_memory(const WinHandle& process, std::uintptr_t address, T& out) {
 			if (!process) return false;
 			SIZE_T bytesRead = 0;
 			return ReadProcessMemory(process.get(), reinterpret_cast<LPCVOID>(address), &out, sizeof(T), &bytesRead) && bytesRead == sizeof(T);
 		}
 
+		bool read_memory(const WinHandle& process, std::uintptr_t address, void* buffer, std::size_t size);
+
 		template<typename T>
-		bool write_memory(const WinHandle& process, std::uintptr_t address, const T& value) {
+		bool write_trivial_memory(const WinHandle& process, std::uintptr_t address, const T& value) {
 			if (!process) return false;
 			SIZE_T bytesWritten = 0;
 			return WriteProcessMemory(process.get(), reinterpret_cast<LPVOID>(address), &value, sizeof(T), &bytesWritten) && bytesWritten == sizeof(T);
 		}
+
+		bool write_memory(const WinHandle& process, std::uintptr_t address, const void* buffer, std::size_t size);
+
 
 		// Add allocate_specific_memory if needed (VirtualAllocEx with an address hint) (Code caves, manual mapping, etc.)
 		// Allocate memory in the target process; returns the base address of the allocated region on success
@@ -52,6 +57,21 @@ namespace PT {
 
 		// Free memory in the target process; returns true on success
 		bool free_memory(const WinHandle& process, std::uintptr_t address, std::size_t size, DWORD free_type = MEM_RELEASE);
+
+		// Write to a new memory region (allocate + write); returns the base address of the allocated region on success
+		template<typename T>
+		std::optional<std::uintptr_t> trivial_allocate_and_write(const WinHandle& process, const T& value, DWORD allocation_type = MEM_COMMIT | MEM_RESERVE, DWORD protect = PAGE_EXECUTE_READWRITE) {
+			if (!process) return std::nullopt;
+			auto allocated = allocate_memory(process, sizeof(T), allocation_type, protect);
+			if (!allocated) return std::nullopt;
+			if (!write_memory<T>(process, *allocated, value)) {
+				free_memory(process, *allocated, sizeof(T));
+				return std::nullopt;
+			}
+			return allocated;
+		}
+
+		std::optional<std::uintptr_t> allocate_and_write(const WinHandle& process, const void* buffer, std::size_t size, DWORD allocation_type = MEM_COMMIT | MEM_RESERVE, DWORD protect = PAGE_EXECUTE_READWRITE);
 
 		// Check if a region is readable (simple check using protect flags)
 		bool is_readable(const MemoryInfo& mi);

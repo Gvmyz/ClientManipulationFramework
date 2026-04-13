@@ -53,7 +53,12 @@ int main(int argc, char** argv) {
 	}
 	std::cout << "[+] Successfully opened process " << ppid << "\n";
 
-	auto allocated = PT::Memory::allocate_memory(proc, 4096);
+	char test[128] = "Hello from the other side!";
+	char res[128]{};
+
+	std::string t{};
+	auto allocated = PT::Memory::allocate_and_write(proc, test, sizeof(test));
+
 	if (!allocated) {
 		std::cerr << "Failed to allocate memory\n";
 		std::cerr << GetLastError() << "\n";
@@ -68,7 +73,13 @@ int main(int argc, char** argv) {
 		std::cerr << "Failed to get memory info\n";
 	}
 
-	if (PT::Memory::free_memory(proc, *allocated, 0, MEM_RELEASE)) {
+	if (PT::Memory::read_memory(proc, *allocated, res, sizeof(res))) {
+		std::cout << "[+] Successfully read memory: " << res << "\n";
+	} else {
+		std::cerr << "Failed to read memory\n";
+	}
+
+	/*if (PT::Memory::free_memory(proc, *allocated, 0, MEM_RELEASE)) {
 		std::cout << "[+] Successfully freed memory at 0x" << std::hex << *allocated << "\n";
 	} else {
 		std::cerr << "Failed to free memory\n";
@@ -80,7 +91,7 @@ int main(int argc, char** argv) {
 		print_memory_info(*mem);
 	} else {
 		std::cerr << "Failed to get memory info\n";
-	}
+	}*/
 	return 0;
 }
 

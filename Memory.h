@@ -85,5 +85,7 @@ namespace PT {
 		std::vector<MemoryInfo> filter_committed_regions(std::vector<MemoryInfo> mem_infos);
 		std::vector<MemoryInfo> filter_private_regions(std::vector<MemoryInfo> mem_infos);
 		std::vector<MemoryInfo> filter_executable_regions(std::vector<MemoryInfo> mem_infos);
+
+		std::optional<WinHandle> create_thread(const WinHandle& process, std::uintptr_t start_address, void* parameter = nullptr, DWORD creation_flags = 0);
 	}
 }

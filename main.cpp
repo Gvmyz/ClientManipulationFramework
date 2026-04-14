@@ -43,8 +43,9 @@ void print_processes() {
 
 
 int main(int argc, char** argv) {
-	const unsigned int ppid = 20736;
-	const std::uintptr_t address = 0x00000089752FF850ULL;
+	const unsigned int ppid = 9320;
+	const std::uintptr_t val_address = 0x00000089752FF850ULL;
+	const std::uintptr_t hello_address = 0x00007FF7640D1000ULL;
 
 	auto proc = PT::Process::open_process(ppid, PROCESS_ALL_ACCESS);
 	if (!proc) {
@@ -53,31 +54,7 @@ int main(int argc, char** argv) {
 	}
 	std::cout << "[+] Successfully opened process " << ppid << "\n";
 
-	char test[128] = "Hello from the other side!";
-	char res[128]{};
-
-	std::string t{};
-	auto allocated = PT::Memory::allocate_and_write(proc, test, sizeof(test));
-
-	if (!allocated) {
-		std::cerr << "Failed to allocate memory\n";
-		std::cerr << GetLastError() << "\n";
-		return 1;
-	}
-	std::cout << "[+] Successfully allocated memory at 0x" << std::hex << *allocated << "\n";
-
-	std::cout << "\n[*]Memory region in the target process:\n";
-	if (auto mem = PT::Memory::get_memory_info(proc, *allocated)) {
-		print_memory_info(*mem);
-	} else {
-		std::cerr << "Failed to get memory info\n";
-	}
-
-	if (PT::Memory::read_memory(proc, *allocated, res, sizeof(res))) {
-		std::cout << "[+] Successfully read memory: " << res << "\n";
-	} else {
-		std::cerr << "Failed to read memory\n";
-	}
+	PT::Memory::create_thread(proc, hello_address);
 
 	/*if (PT::Memory::free_memory(proc, *allocated, 0, MEM_RELEASE)) {
 		std::cout << "[+] Successfully freed memory at 0x" << std::hex << *allocated << "\n";

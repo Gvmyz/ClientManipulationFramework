@@ -153,5 +153,17 @@ namespace PT {
 			}
 			return allocated;
 		}
+
+		// Might return a struct with ThreadID, exit code and handle if needed; for now just return the handle
+		// Note: CreateRemoteThread can be used to execute code in the target process, but it has limitations (e.g., it may not work well with certain mitigations). For more advanced techniques, consider manual mapping or using APCs.
+		std::optional<WinHandle> create_thread(const WinHandle& process, std::uintptr_t start_address, void* parameter, DWORD creation_flags) {
+			if (!process) return std::nullopt;
+			DWORD threadId{0}; // Optionally, you can capture the thread ID if needed
+			HANDLE threadHandle = CreateRemoteThread(process.get(), nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(start_address), parameter, creation_flags, &threadId);
+			if (!threadHandle) {
+				return std::nullopt;
+			}
+			return WinHandle(threadHandle);
+		}
 	}
 }

@@ -138,6 +138,7 @@
     <ClCompile Include="external\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="external\imgui\imgui_tables.cpp" />
     <ClCompile Include="external\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="Injector.cpp" />
     <ClCompile Include="inspector.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Memory.cpp" />
@@ -155,6 +156,7 @@
     <ClInclude Include="external\imgui\imstb_rectpack.h" />
     <ClInclude Include="external\imgui\imstb_textedit.h" />
     <ClInclude Include="external\imgui\imstb_truetype.h" />
+    <ClInclude Include="Injector.h" />
     <ClInclude Include="inspector.h" />
     <ClInclude Include="Memory.h" />
     <ClInclude Include="Privileges.h" />

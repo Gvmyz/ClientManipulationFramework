@@ -10,6 +10,7 @@
 #include "WinHandle.h"
 #include <string_view>
 #include "Process.h"
+#include "Injector.h"
 
 
 void print_memory_info(const PT::MemoryInfo& mbi) {
@@ -54,7 +55,8 @@ int main(int argc, char** argv) {
 	}
 	std::cout << "[+] Successfully opened process " << ppid << "\n";
 
-	PT::Memory::create_thread(proc, hello_address);
+	PT::Injector::inject_dll(proc, L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ProcessToolkit\\x64\\Release\\TestDll.dll");
+	/*PT::Memory::create_thread(proc, hello_address);*/
 
 	/*if (PT::Memory::free_memory(proc, *allocated, 0, MEM_RELEASE)) {
 		std::cout << "[+] Successfully freed memory at 0x" << std::hex << *allocated << "\n";

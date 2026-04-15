@@ -69,6 +69,9 @@
     <ClCompile Include="Privileges.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Injector.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="WinHandle.h">
@@ -111,6 +114,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Privileges.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Injector.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -44,9 +44,18 @@ void print_processes() {
 
 
 int main(int argc, char** argv) {
-	const unsigned int ppid = 9320;
+	const unsigned int ppid = 12828;
 	const std::uintptr_t val_address = 0x00000089752FF850ULL;
 	const std::uintptr_t hello_address = 0x00007FF7640D1000ULL;
+	const std::wstring_view dll_path{L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ProcessToolkit\\x64\\Release\\TestDll.dll"};
+	const std::wstring_view dll_name{L"TestDll.dll"};
+	const std::string_view dll_function_name{"RunTest"};
+
+	auto local_dll_base = PT::Injector::local_inject(dll_path);
+	if (!local_dll_base) {
+		std::cerr << "[-] Failed to inject DLL into local process\n";
+		return 1;
+	}
 
 	auto proc = PT::Process::open_process(ppid, PROCESS_ALL_ACCESS);
 	if (!proc) {
@@ -55,7 +64,30 @@ int main(int argc, char** argv) {
 	}
 	std::cout << "[+] Successfully opened process " << ppid << "\n";
 
-	PT::Injector::inject_dll(proc, L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ProcessToolkit\\x64\\Release\\TestDll.dll");
+	auto exit_code = PT::Injector::inject_dll(proc, dll_path);
+	if (exit_code) {
+		std::cout << "[+] Successfully injected DLL\n";
+	} else {
+		std::cerr << "[-] Failed to inject DLL\n";
+		return 1;
+	}
+
+	auto dll_base = PT::Memory::find_module_base(proc, dll_name);
+	if (!dll_base) {
+		std::cerr << "[-] Failed to find module base\n";
+		return 1;
+	}
+	std::cout << "At base: 0x" << std::hex << *dll_base << "\n";
+
+	if (PT::Injector::call_injected_function(proc, dll_name, *dll_base, dll_function_name)) {
+		std::cout << "[+] Successfully called function " << dll_function_name << " in DLL\n";
+		std::cout << "At base: 0x" << std::hex << *dll_base << "\n";
+	} else {
+		std::cerr << "[-] Failed to call function " << dll_function_name << " in DLL\n";
+	}
+
+	//PT::Injector::unload_dll(proc, L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ProcessToolkit\\x64\\Release\\TestDll.dll");
+
 	/*PT::Memory::create_thread(proc, hello_address);*/
 
 	/*if (PT::Memory::free_memory(proc, *allocated, 0, MEM_RELEASE)) {

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 #include <optional>
+#include <Psapi.h>
 
 #include "WinHandle.h"
 
@@ -87,5 +88,12 @@ namespace PT {
 		std::vector<MemoryInfo> filter_executable_regions(std::vector<MemoryInfo> mem_infos);
 
 		std::optional<WinHandle> create_thread(const WinHandle& process, std::uintptr_t start_address, void* parameter = nullptr, DWORD creation_flags = 0);
+
+
+		std::optional<DWORD> get_thread_exit_code(const WinHandle& thread);
+
+		std::optional<DWORD> wait_for_thread_exit_code(const WinHandle& thread, DWORD wait_time = INFINITE);
+
+		std::optional<uintptr_t> find_module_base(const WinHandle& process, const std::wstring_view& module_name, DWORD filter_flag = LIST_MODULES_64BIT);
 	}
 }

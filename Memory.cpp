@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <string_view>
 #include <optional>
+#include <Psapi.h>
 
 namespace PT {
 	namespace Memory {
@@ -164,6 +165,41 @@ namespace PT {
 				return std::nullopt;
 			}
 			return WinHandle(threadHandle);
+		}
+
+		std::optional<DWORD> get_thread_exit_code(const WinHandle& thread) {
+			if (!thread) return std::nullopt;
+			DWORD exitCode{0};
+			if (!GetExitCodeThread(thread.get(), &exitCode)) {
+				return std::nullopt;
+			}
+			return exitCode;
+		}
+
+		std::optional<DWORD> wait_for_thread_exit_code(const WinHandle& thread, DWORD wait_time) {
+			if (!thread) return std::nullopt;
+			DWORD waitResult = WaitForSingleObject(thread.get(), wait_time);
+			if (waitResult != WAIT_OBJECT_0) {
+				return std::nullopt; // Wait failed or timed out
+			}
+			return get_thread_exit_code(thread);
+		}
+
+		std::optional<uintptr_t> find_module_base(const WinHandle& process, const std::wstring_view& module_name, DWORD filter_flag) {
+			if (!process) return std::nullopt;
+			HMODULE hMods[1024];
+			DWORD cbNeeded;
+			if (EnumProcessModulesEx(process.get(), hMods, sizeof(hMods), &cbNeeded, filter_flag)) {
+				for (size_t i = 0; i < (cbNeeded / sizeof(HMODULE)); i++) {
+					wchar_t baseName[512];
+					if (GetModuleBaseNameW(process.get(), hMods[i], baseName, 512)) {
+						if (module_name == baseName) {
+							return reinterpret_cast<std::uintptr_t>(hMods[i]);
+						}
+					}
+				}
+			}
+			return std::nullopt; // Module not found
 		}
 	}
 }

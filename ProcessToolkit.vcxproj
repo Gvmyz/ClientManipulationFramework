@@ -161,6 +161,7 @@
     <ClInclude Include="Memory.h" />
     <ClInclude Include="Privileges.h" />
     <ClInclude Include="Process.h" />
+    <ClInclude Include="Utils.h" />
     <ClInclude Include="window.h" />
     <ClInclude Include="WinHandle.h" />
   </ItemGroup>

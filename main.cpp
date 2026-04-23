@@ -11,6 +11,7 @@
 #include <string_view>
 #include "Process.h"
 #include "Injector.h"
+#include "Utils.h"
 
 
 void print_memory_info(const PT::MemoryInfo& mbi) {
@@ -44,48 +45,38 @@ void print_processes() {
 
 
 int main(int argc, char** argv) {
-	const unsigned int ppid = 12828;
+	PT::Cli::enable_ansi();
+	const unsigned int ppid = 22400;
 	const std::uintptr_t val_address = 0x00000089752FF850ULL;
 	const std::uintptr_t hello_address = 0x00007FF7640D1000ULL;
 	const std::wstring_view dll_path{L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ProcessToolkit\\x64\\Release\\TestDll.dll"};
 	const std::wstring_view dll_name{L"TestDll.dll"};
 	const std::string_view dll_function_name{"RunTest"};
 
+	PT::Cli::print_section("Local DLL Loading");
 	auto local_dll_base = PT::Injector::local_inject(dll_path);
-	if (!local_dll_base) {
-		std::cerr << "[-] Failed to inject DLL into local process\n";
-		return 1;
-	}
+	PT::Cli::run_step("Inject DLL", local_dll_base.has_value());
 
+
+
+	PT::Cli::print_section("Open Target Process");
 	auto proc = PT::Process::open_process(ppid, PROCESS_ALL_ACCESS);
-	if (!proc) {
-		std::cerr << "Failed to open process\n";
-		return 1;
-	}
-	std::cout << "[+] Successfully opened process " << ppid << "\n";
+	PT::Cli::run_step(std::format("Opened process {}", ppid), proc.valid());
 
+	PT::Cli::print_section("Inject DLL");
 	auto exit_code = PT::Injector::inject_dll(proc, dll_path);
-	if (exit_code) {
-		std::cout << "[+] Successfully injected DLL\n";
-	} else {
-		std::cerr << "[-] Failed to inject DLL\n";
-		return 1;
-	}
+	PT::Cli::run_step("Injected DLL", exit_code.has_value());
 
+	PT::Cli::print_section("Find Remote Module");
 	auto dll_base = PT::Memory::find_module_base(proc, dll_name);
-	if (!dll_base) {
-		std::cerr << "[-] Failed to find module base\n";
-		return 1;
-	}
-	std::cout << "At base: 0x" << std::hex << *dll_base << "\n";
+	PT::Cli::run_step(std::format("Found remote module base"), dll_base.has_value());
+	PT::Cli::print_named_hex("Remote DLL base", *dll_base);
 
-	if (PT::Injector::call_injected_function(proc, dll_name, *dll_base, dll_function_name)) {
-		std::cout << "[+] Successfully called function " << dll_function_name << " in DLL\n";
-		std::cout << "At base: 0x" << std::hex << *dll_base << "\n";
-	} else {
-		std::cerr << "[-] Failed to call function " << dll_function_name << " in DLL\n";
-	}
+	PT::Cli::print_section("Call Exported Function");
+	bool injection_result = PT::Injector::call_injected_function(proc, dll_name, *dll_base, dll_function_name);
+	PT::Cli::run_step(std::format("Called function {}", dll_function_name), injection_result);
 
+	return 0;
 	//PT::Injector::unload_dll(proc, L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ProcessToolkit\\x64\\Release\\TestDll.dll");
 
 	/*PT::Memory::create_thread(proc, hello_address);*/
@@ -103,6 +94,6 @@ int main(int argc, char** argv) {
 	} else {
 		std::cerr << "Failed to get memory info\n";
 	}*/
-	return 0;
+
 }
 

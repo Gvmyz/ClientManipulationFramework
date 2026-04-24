@@ -8,8 +8,10 @@
 #include <stdio.h>
 #include <evntcons.h>
 #include <tdh.h>
+#include "JsonLogger.h"
 
 #pragma comment(lib, "tdh.lib")
+
 
 void WINAPI OnEvent(PEVENT_RECORD rec) {
 	// Process the event record here
@@ -35,7 +37,6 @@ void WINAPI OnEvent(PEVENT_RECORD rec) {
 		auto task = reinterpret_cast<wchar_t*>(buffer.get() + info->TaskNameOffset);
 		if (wcscmp(task, L"ProcessStart") != 0) {
 			return;
-			printf(" Process Start Event Detected!");
 		}
 	}
 
@@ -43,30 +44,47 @@ void WINAPI OnEvent(PEVENT_RECORD rec) {
 		std::cerr << "Failed to get event information: " << status << std::endl;
 		return;
 	}
-
-	printf("[%02d:%02d:%02d.%03d] PID: %lu  TID: %lu\n",
+	TelemetryEvent event{};
+	event.utc_time = std::to_wstring(st.wYear) + L"-" +
+		std::to_wstring(st.wMonth) + L"-" +
+		std::to_wstring(st.wDay) + L" " +
+		std::to_wstring(st.wHour) + L":" +
+		std::to_wstring(st.wMinute) + L":" +
+		std::to_wstring(st.wSecond) + L"." +
+		std::to_wstring(st.wMilliseconds);
+	event.pid = header.ProcessId;
+	event.tid = header.ThreadId;
+	printf("%ls PID: %lu  TID: %lu\n",
+		   event.utc_time.c_str(),
+		   event.pid, event.tid);
+	/*printf("[%02d:%02d:%02d.%03d] PID: %lu  TID: %lu\n",
 		   st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-		   header.ProcessId, header.ThreadId);
+		   header.ProcessId, header.ThreadId);*/
 
 	if (info->EventNameOffset) {
 		auto name = reinterpret_cast<wchar_t*>(buffer.get() + info->EventNameOffset);
+		event.name = name;
 		printf(" Event Name: %ls", name);
 	}
 	if (info->KeywordsNameOffset) {
 		auto keywords = reinterpret_cast<wchar_t*>(buffer.get() + info->KeywordsNameOffset);
+		event.keywords = keywords;
 		printf(" Keywords: %ls", keywords);
 	}
 	if (info->OpcodeNameOffset) {
 		auto opcode = reinterpret_cast<wchar_t*>(buffer.get() + info->OpcodeNameOffset);
+		event.opcode = opcode;
 		printf(" Opcode: %ls", opcode);
 	}
 	if (info->TaskNameOffset) {
 		auto task = reinterpret_cast<wchar_t*>(buffer.get() + info->TaskNameOffset);
+		event.task = task;
 		printf(" Task: %ls", task);
 	}
 	if (info->LevelNameOffset) {
 		auto level = reinterpret_cast<wchar_t*>(buffer.get() + info->LevelNameOffset);
-		printf(" Level: %ws", level);
+		event.level = level;
+		printf(" Level: %ls", level);
 	}
 	printf("\n\n");
 
@@ -90,9 +108,13 @@ void WINAPI OnEvent(PEVENT_RECORD rec) {
 			}
 		}
 	}
+	JsonLogger::instance().write_event(event);
 }
 
+
 int wmain(int argc, wchar_t* argv[]) {
+	auto& logger = JsonLogger::init(L"telemetry.json");
+
 	if (argc < 2) {
 		printf("Usage: %ls <Guid>\n", argv[0]);
 		return 1;

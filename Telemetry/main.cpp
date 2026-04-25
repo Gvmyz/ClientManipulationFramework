@@ -9,42 +9,42 @@
 #include <evntcons.h>
 #include <tdh.h>
 #include "JsonLogger.h"
+#include <map>
+#include <wchar.h>
+#include <optional>
 
 #pragma comment(lib, "tdh.lib")
 
+// Use it later for filtering events based on process ID or name
+// Extend it (Argument based)
+struct TelemetryFilter {
+	std::optional<DWORD> pid{std::nullopt};
+	std::optional<std::wstring> process_name{std::nullopt};
 
-void WINAPI OnEvent(PEVENT_RECORD rec) {
-	// Process the event record here
-	const auto& header = rec->EventHeader;
-	FILETIME ft{};
-	FileTimeToLocalFileTime(
-		reinterpret_cast<const FILETIME*>(&header.TimeStamp), &ft);
+	bool matches(const TelemetryEvent& e) const {
+		if (pid && e.pid != *pid) {
+			return false;
+		}
+
+		if (process_name && e.name != *process_name) {
+			return false;
+		}
+
+		return true;
+	}
+};
+
+SYSTEMTIME filetime_to_systemtime(const FILETIME& ft) {
 	SYSTEMTIME st{};
 	FileTimeToSystemTime(&ft, &st);
-	/*printf("[%02d:%02d:%02d.%03d] PID: %lu  TID: %lu\n",
-		   st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-		   header.ProcessId, header.ThreadId);*/
+	return st;
+}
 
-	ULONG buffer_size = 0;
-	TdhGetEventInformation(rec, 0, nullptr, nullptr, &buffer_size);
-
-	auto buffer = std::make_unique<BYTE[]>(buffer_size);
-	auto info = reinterpret_cast<TRACE_EVENT_INFO*>(buffer.get());
-
-	auto status = TdhGetEventInformation(rec, 0, nullptr, info, &buffer_size);
-
-	if (info->TaskNameOffset) {
-		auto task = reinterpret_cast<wchar_t*>(buffer.get() + info->TaskNameOffset);
-		if (wcscmp(task, L"ProcessStart") != 0) {
-			return;
-		}
-	}
-
-	if (status != ERROR_SUCCESS) {
-		std::cerr << "Failed to get event information: " << status << std::endl;
-		return;
-	}
+TelemetryEvent build_event(PEVENT_RECORD rec) {
+	const auto& header = rec->EventHeader;
 	TelemetryEvent event{};
+
+	SYSTEMTIME st = filetime_to_systemtime(*reinterpret_cast<const FILETIME*>(&header.TimeStamp));
 	event.utc_time = std::to_wstring(st.wYear) + L"-" +
 		std::to_wstring(st.wMonth) + L"-" +
 		std::to_wstring(st.wDay) + L" " +
@@ -54,39 +54,33 @@ void WINAPI OnEvent(PEVENT_RECORD rec) {
 		std::to_wstring(st.wMilliseconds);
 	event.pid = header.ProcessId;
 	event.tid = header.ThreadId;
-	printf("%ls PID: %lu  TID: %lu\n",
-		   event.utc_time.c_str(),
-		   event.pid, event.tid);
-	/*printf("[%02d:%02d:%02d.%03d] PID: %lu  TID: %lu\n",
-		   st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
-		   header.ProcessId, header.ThreadId);*/
+
+	ULONG buffer_size = 0;
+	TdhGetEventInformation(rec, 0, nullptr, nullptr, &buffer_size);
+
+	auto buffer = std::make_unique<BYTE[]>(buffer_size);
+	auto info = reinterpret_cast<TRACE_EVENT_INFO*>(buffer.get());
+
+	auto status = TdhGetEventInformation(rec, 0, nullptr, info, &buffer_size);
+	if (status != ERROR_SUCCESS) {
+		return event;
+	}
 
 	if (info->EventNameOffset) {
-		auto name = reinterpret_cast<wchar_t*>(buffer.get() + info->EventNameOffset);
-		event.name = name;
-		printf(" Event Name: %ls", name);
+		event.name = reinterpret_cast<wchar_t*>(buffer.get() + info->EventNameOffset);
 	}
 	if (info->KeywordsNameOffset) {
-		auto keywords = reinterpret_cast<wchar_t*>(buffer.get() + info->KeywordsNameOffset);
-		event.keywords = keywords;
-		printf(" Keywords: %ls", keywords);
+		event.keywords = reinterpret_cast<wchar_t*>(buffer.get() + info->KeywordsNameOffset);
 	}
 	if (info->OpcodeNameOffset) {
-		auto opcode = reinterpret_cast<wchar_t*>(buffer.get() + info->OpcodeNameOffset);
-		event.opcode = opcode;
-		printf(" Opcode: %ls", opcode);
+		event.opcode = reinterpret_cast<wchar_t*>(buffer.get() + info->OpcodeNameOffset);
 	}
 	if (info->TaskNameOffset) {
-		auto task = reinterpret_cast<wchar_t*>(buffer.get() + info->TaskNameOffset);
-		event.task = task;
-		printf(" Task: %ls", task);
+		event.task = reinterpret_cast<wchar_t*>(buffer.get() + info->TaskNameOffset);
 	}
 	if (info->LevelNameOffset) {
-		auto level = reinterpret_cast<wchar_t*>(buffer.get() + info->LevelNameOffset);
-		event.level = level;
-		printf(" Level: %ls", level);
+		event.level = reinterpret_cast<wchar_t*>(buffer.get() + info->LevelNameOffset);
 	}
-	printf("\n\n");
 
 	auto len = rec->UserDataLength;
 	auto data = reinterpret_cast<BYTE*>(rec->UserData);
@@ -96,23 +90,98 @@ void WINAPI OnEvent(PEVENT_RECORD rec) {
 	WCHAR text[256];
 	for (ULONG i = 0; i < info->TopLevelPropertyCount && len > 0; ++i) {
 		EVENT_PROPERTY_INFO prop = info->EventPropertyInfoArray[i];
+
 		auto prop_name = reinterpret_cast<wchar_t*>(buffer.get() + prop.NameOffset);
-		printf("  Name: %ls ", prop_name);
-		if (prop.Flags == 0) {
-			ULONG text_len = _countof(text);
-			USHORT consumed;
-			if (ERROR_SUCCESS == TdhFormatProperty(info, nullptr, ptr_size, prop.nonStructType.InType, prop.nonStructType.OutType, prop.length, len, data, &text_len, text, &consumed)) {
-				printf("%ls\n", text);
-				data += consumed;
-				len -= consumed;
-			}
+		if (prop.Flags != 0) {
+			continue;
+		}
+
+		ULONG text_len = _countof(text);
+		USHORT consumed;
+
+		status = TdhFormatProperty(info, nullptr, ptr_size, prop.nonStructType.InType, prop.nonStructType.OutType, prop.length, len, data, &text_len, text, &consumed);
+
+		if (status == ERROR_SUCCESS) {
+			event.properties[prop_name] = text;
+			data += consumed;
+			len -= consumed;
 		}
 	}
+	return event;
+}
+
+bool is_process_start_event(const TelemetryEvent& event) {
+	return wcscmp(event.task.c_str(), L"Process") == 0;
+}
+
+bool is_thread_event(const TelemetryEvent& event) {
+	return event.task == L"ThreadStart" ||
+		event.task == L"ThreadStop" ||
+		event.name == L"ThreadStart" ||
+		event.name == L"ThreadStop";
+}
+
+bool is_image_event(const TelemetryEvent& event) {
+	return event.task == L"ImageLoad" ||
+		event.name == L"ImageLoad" ||
+		event.opcode == L"Load";
+}
+
+bool should_log_event(const TelemetryEvent& event) {
+	return is_process_start_event(event) || is_thread_event(event) || is_image_event(event);
+}
+
+void print_event(const TelemetryEvent& event) {
+	wprintf(
+		L"%ls PID: %lu TID: %lu",
+		event.utc_time.c_str(),
+		event.pid,
+		event.tid
+	);
+
+	if (!event.name.empty()) {
+		wprintf(L" Event: %ls", event.name.c_str());
+	}
+
+	if (!event.task.empty()) {
+		wprintf(L" Task: %ls", event.task.c_str());
+	}
+
+	if (!event.opcode.empty()) {
+		wprintf(L" Opcode: %ls", event.opcode.c_str());
+	}
+
+	wprintf(L"\n");
+
+	for (const auto& x : event.properties) {
+		wprintf(L"  %ls: %ls\n", x.first.c_str(), x.second.c_str());
+	}
+
+	wprintf(L"\n");
+}
+
+void WINAPI OnEvent(PEVENT_RECORD rec) {
+	auto event = build_event(rec);
+
+	if (!should_log_event(event)) {
+		return;
+	}
+	print_event(event);
 	JsonLogger::instance().write_event(event);
 }
 
 
 int wmain(int argc, wchar_t* argv[]) {
+	// std::unordered_map<DWORD, std::wstring> pid_to_name;
+	TelemetryFilter filter{};
+	for (int i = 2; i < argc; ++i) {
+		if (wcscmp(argv[i], L"--pid") == 0 && i + 1 < argc) {
+			filter.pid = std::wcstoul(argv[++i], nullptr, 10);
+		} else if (wcscmp(argv[i], L"--name") == 0 && i + 1 < argc) {
+			filter.process_name = argv[++i];
+		}
+	}
+
 	auto& logger = JsonLogger::init(L"telemetry.json");
 
 	if (argc < 2) {

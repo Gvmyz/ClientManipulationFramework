@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <map>
 
 
 struct TelemetryEvent {
@@ -17,9 +18,7 @@ struct TelemetryEvent {
 	std::wstring level;
 	ULONG pid;
 	ULONG tid;
-	std::wstring process_name;
-	std::wstring image_path;
-	std::wstring metadata_json;
+	std::map<std::wstring, std::wstring> properties;
 };
 
 class JsonLogger {
@@ -55,9 +54,6 @@ public:
 			<< L"\"level\":\"" << escape_json(event.level) << L"\","
 			<< L"\"pid\":" << event.pid << L","
 			<< L"\"tid\":" << event.tid << L","
-			<< L"\"process_name\":\"" << escape_json(event.process_name) << L"\","
-			<< L"\"image_path\":\"" << escape_json(event.image_path) << L"\","
-			<< L"\"metadata\":" << metadata_or_empty(event.metadata_json)
 			<< L"}\n";
 
 		file_.flush(); // optional but useful while debugging

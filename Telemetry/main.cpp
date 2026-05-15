@@ -5,12 +5,10 @@
 #include <string>
 #include <windows.h>
 #include <evntrace.h>
-#include <stdio.h>
 #include <evntcons.h>
 #include <tdh.h>
 #include "JsonLogger.h"
 #include <map>
-#include <wchar.h>
 #include <optional>
 
 #pragma comment(lib, "tdh.lib")
@@ -26,13 +24,22 @@ struct TelemetryFilter {
 			return false;
 		}
 
-		if (process_name && e.name != *process_name) {
-			return false;
-		}
+		if (process_name) {
+			if (e.process_name.empty()) {
+				return false;
+			}
 
+			if (_wcsicmp(e.process_name.c_str(), process_name->c_str()) != 0) {
+				return false;
+			}
+		}
 		return true;
 	}
 };
+
+TelemetryFilter g_filter{};
+
+
 
 SYSTEMTIME filetime_to_systemtime(const FILETIME& ft) {
 	SYSTEMTIME st{};
@@ -85,7 +92,6 @@ TelemetryEvent build_event(PEVENT_RECORD rec) {
 	auto len = rec->UserDataLength;
 	auto data = reinterpret_cast<BYTE*>(rec->UserData);
 	auto ptr_size = rec->EventHeader.Flags & EVENT_HEADER_FLAG_32_BIT_HEADER ? 4 : 8;
-	ULONG start = 0;
 
 	WCHAR text[256];
 	for (ULONG i = 0; i < info->TopLevelPropertyCount && len > 0; ++i) {
@@ -103,6 +109,17 @@ TelemetryEvent build_event(PEVENT_RECORD rec) {
 
 		if (status == ERROR_SUCCESS) {
 			event.properties[prop_name] = text;
+
+			if (_wcsicmp(prop_name, L"ImageName") == 0 ||
+				_wcsicmp(prop_name, L"FileName") == 0) {
+				event.image_path = text;
+			}
+
+			if (_wcsicmp(prop_name, L"ProcessName") == 0 ||
+				_wcsicmp(prop_name, L"ImageFileName") == 0) {
+				event.process_name = text;
+			}
+
 			data += consumed;
 			len -= consumed;
 		}
@@ -166,29 +183,35 @@ void WINAPI OnEvent(PEVENT_RECORD rec) {
 	if (!should_log_event(event)) {
 		return;
 	}
+	if (!g_filter.matches(event)) {
+		return;
+	}
+
 	print_event(event);
 	JsonLogger::instance().write_event(event);
 }
 
 
 int wmain(int argc, wchar_t* argv[]) {
+
+	if (argc < 2) {
+		wprintf(L"Usage: %ls <ProviderGuid> [--pid PID] [--name process.exe]\n", argv[0]);
+		return 1;
+	}
+
 	// std::unordered_map<DWORD, std::wstring> pid_to_name;
-	TelemetryFilter filter{};
 	for (int i = 2; i < argc; ++i) {
 		if (wcscmp(argv[i], L"--pid") == 0 && i + 1 < argc) {
-			filter.pid = std::wcstoul(argv[++i], nullptr, 10);
+			g_filter.pid = static_cast<DWORD>(std::wcstoul(argv[++i], nullptr, 10));
 		} else if (wcscmp(argv[i], L"--name") == 0 && i + 1 < argc) {
-			filter.process_name = argv[++i];
+			g_filter.process_name = argv[++i];
+		} else {
+			wprintf(L"Unknown argument: %ls\n", argv[i]);
+			return 1;
 		}
 	}
 
 	auto& logger = JsonLogger::init(L"telemetry.json");
-
-	if (argc < 2) {
-		printf("Usage: %ls <Guid>\n", argv[0]);
-		return 1;
-	}
-	std::cout << "Hello World!\n";
 
 	GUID guid;
 	if (CLSIDFromString(argv[1], &guid) != S_OK) {
@@ -243,16 +266,4 @@ int wmain(int argc, wchar_t* argv[]) {
 	}
 
 	ProcessTrace(&hParse, 1, nullptr, nullptr);
-
-	//CloseTrace(hParse);
-
-	// 1) install shutdown handler
-	// 2) create telemetry session object
-	// 3) start ETW session
-	// 4) enable one provider
-	// 5) start consumer thread
-	// 6) wait until user stops program
-	// 7) stop session
-	// 8) join consumer thread
-	// 9) clean up
 }

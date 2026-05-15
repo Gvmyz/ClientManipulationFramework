@@ -12,6 +12,8 @@
 struct TelemetryEvent {
 	std::wstring utc_time;
 	std::wstring name;
+	std::wstring process_name;
+	std::wstring image_path;
 	std::wstring keywords;
 	std::wstring opcode;
 	std::wstring task;
@@ -48,12 +50,14 @@ public:
 		file_ << L"{"
 			<< L"\"utc_time\":\"" << escape_json(event.utc_time) << L"\","
 			<< L"\"name\":\"" << escape_json(event.name) << L"\","
+			<< L"\"process_name\":\"" << escape_json(event.process_name) << L"\","
+			<< L"\"image_path\":\"" << escape_json(event.image_path) << L"\","
 			<< L"\"keywords\":\"" << escape_json(event.keywords) << L"\","
 			<< L"\"opcode\":\"" << escape_json(event.opcode) << L"\","
 			<< L"\"task\":\"" << escape_json(event.task) << L"\","
 			<< L"\"level\":\"" << escape_json(event.level) << L"\","
 			<< L"\"pid\":" << event.pid << L","
-			<< L"\"tid\":" << event.tid << L","
+			<< L"\"tid\":" << event.tid
 			<< L"}\n";
 
 		file_.flush(); // optional but useful while debugging

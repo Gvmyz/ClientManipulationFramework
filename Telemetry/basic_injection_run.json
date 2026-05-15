@@ -1,0 +1,348 @@
+{
+    "utc_time": "2026-5-13 9:31:27.430",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestDll.dll",
+    "image_path": "0x7FFF9CDB0000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.432",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\TextShaping.dll",
+    "image_path": "0x7FFFBDA40000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.432",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\msvcrt.dll",
+    "image_path": "0x7FFFD1B50000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.432",
+    "name": "",
+    "process_name": "",
+    "image_path": "",
+    "keywords": "WINEVENT_KEYWORD_THREAD",
+    "opcode": "Start ",
+    "task": "ThreadStart",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.432",
+    "name": "",
+    "process_name": "",
+    "image_path": "",
+    "keywords": "WINEVENT_KEYWORD_THREAD",
+    "opcode": "Start ",
+    "task": "ThreadStart",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 23288
+}
+{
+    "utc_time": "2026-5-13 9:31:27.443",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\uxtheme.dll",
+    "image_path": "0x7FFFCD100000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.443",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\combase.dll",
+    "image_path": "0x7FFFD11D0000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.443",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\rpcrt4.dll",
+    "image_path": "0x7FFFD08B0000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.451",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\msctf.dll",
+    "image_path": "0x7FFFD1A30000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.452",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\oleaut32.dll",
+    "image_path": "0x7FFFD0530000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.452",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\sechost.dll",
+    "image_path": "0x7FFFD06E0000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.452",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\bcrypt.dll",
+    "image_path": "0x7FFFD0080000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:27.452",
+    "name": "",
+    "process_name": "",
+    "image_path": "",
+    "keywords": "WINEVENT_KEYWORD_THREAD",
+    "opcode": "Start ",
+    "task": "ThreadStart",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:30.445",
+    "name": "",
+    "process_name": "",
+    "image_path": "",
+    "keywords": "WINEVENT_KEYWORD_THREAD",
+    "opcode": "Stop ",
+    "task": "ThreadStop",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 4184
+}
+{
+    "utc_time": "2026-5-13 9:31:30.466",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\kernel.appcore.dll",
+    "image_path": "0x7FFFCE390000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11336
+}
+{
+    "utc_time": "2026-5-13 9:31:30.466",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\bcryptprimitives.dll",
+    "image_path": "0x7FFFCFBD0000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11336
+}
+{
+    "utc_time": "2026-5-13 9:31:30.470",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\TextInputFramework.dll",
+    "image_path": "0x7FFFC4310000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11336
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\CoreUIComponents.dll",
+    "image_path": "0x7FFFCBD80000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11592
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\CoreMessaging.dll",
+    "image_path": "0x7FFFCC460000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 23288
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\SHCore.dll",
+    "image_path": "0x7FFFD1600000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11592
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\ws2_32.dll",
+    "image_path": "0x7FFFD1740000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 23288
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\ntmarta.dll",
+    "image_path": "0x7FFFCED80000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11968
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\advapi32.dll",
+    "image_path": "0x7FFFD1530000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11592
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\WinTypes.dll",
+    "image_path": "0x7FFFCAC50000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11968
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\WinTypes.dll",
+    "image_path": "0x1E9EE750000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11592
+}
+{
+    "utc_time": "2026-5-13 9:31:30.471",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\WinTypes.dll",
+    "image_path": "0x1E9EE8B0000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 23288
+}
+{
+    "utc_time": "2026-5-13 9:31:31.508",
+    "name": "",
+    "process_name": "",
+    "image_path": "",
+    "keywords": "WINEVENT_KEYWORD_THREAD",
+    "opcode": "Start ",
+    "task": "ThreadStart",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 3052
+}
+{
+    "utc_time": "2026-5-13 9:31:31.513",
+    "name": "",
+    "process_name": "\\Device\\HarddiskVolume3\\Windows\\System32\\ole32.dll",
+    "image_path": "0x7FFFD0780000",
+    "keywords": "WINEVENT_KEYWORD_IMAGE",
+    "opcode": "Info ",
+    "task": "ImageLoad",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11336
+}
+{
+    "utc_time": "2026-5-13 9:31:31.515",
+    "name": "",
+    "process_name": "",
+    "image_path": "",
+    "keywords": "WINEVENT_KEYWORD_THREAD",
+    "opcode": "Stop ",
+    "task": "ThreadStop",
+    "level": "Information ",
+    "pid": 25712,
+    "tid": 11336
+}

@@ -1,23 +1,38 @@
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Language](https://img.shields.io/badge/language-C%2B%2B-blue)
+![Status](https://img.shields.io/badge/status-ongoing-success)
+![Focus](https://img.shields.io/badge/focus-security_research-purple)
+
 # ClientManipulationFramework
 
-Research-oriented framework for experimenting with and analyzing client-side manipulation techniques on Windows systems.
+Research-oriented framework for experimenting with and analyzing low-level client-side manipulation techniques on Windows systems.
 
 The project focuses on low-level process interaction, telemetry collection, runtime behavior analysis, and operating-system-level observability of manipulation techniques such as DLL injection and memory manipulation.
 
 ![Telemetry Screenshot](docs/images/screen_telemetry.png)
 
-[Basic Injection Log](Telemetry/basic_injection_run.json)
+## Example Telemetry Output
+
+- [Basic Injection Log](Telemetry/basic_injection_run.json)
 
 ## Features
 
 - Process enumeration and interaction
 - Remote memory allocation and writing
-- DLL injection experimentation
+- DLL injection and process manipulation experimentation
 - ETW-based telemetry collection
 - Runtime event monitoring
 - JSONL telemetry logging
 - Modular low-level Windows tooling
 - Behavioral analysis experimentation
+
+## Planned Work
+
+- Additional injection techniques
+- Expanded telemetry coverage
+- Behavioral comparison framework
+- Evasion strategy experimentation
+- Runtime visualization tooling
 
 ## Repository Structure
 

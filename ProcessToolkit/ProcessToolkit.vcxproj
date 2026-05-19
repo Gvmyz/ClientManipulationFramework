@@ -77,6 +77,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -93,6 +94,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -107,6 +109,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -123,6 +126,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp23</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -138,14 +142,18 @@
     <ClCompile Include="external\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="external\imgui\imgui_tables.cpp" />
     <ClCompile Include="external\imgui\imgui_widgets.cpp" />
-    <ClCompile Include="Injector.cpp" />
-    <ClCompile Include="inspector.cpp" />
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="Memory.cpp" />
-    <ClCompile Include="Privileges.cpp" />
-    <ClCompile Include="Process.cpp" />
-    <ClCompile Include="window.cpp" />
-    <ClCompile Include="WinHandle.cpp" />
+    <ClCompile Include="src\DllInjection.cpp" />
+    <ClCompile Include="src\Injector.cpp" />
+    <ClCompile Include="src\inspector.cpp" />
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\Memory.cpp" />
+    <ClCompile Include="src\ModuleResolver.cpp" />
+    <ClCompile Include="src\Privileges.cpp" />
+    <ClCompile Include="src\Process.cpp" />
+    <ClCompile Include="src\ProcessMemory.cpp" />
+    <ClCompile Include="src\ProcessThread.cpp" />
+    <ClCompile Include="src\window.cpp" />
+    <ClCompile Include="src\WinHandle.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="external\imgui\imconfig.h" />
@@ -156,14 +164,22 @@
     <ClInclude Include="external\imgui\imstb_rectpack.h" />
     <ClInclude Include="external\imgui\imstb_textedit.h" />
     <ClInclude Include="external\imgui\imstb_truetype.h" />
-    <ClInclude Include="Injector.h" />
-    <ClInclude Include="inspector.h" />
-    <ClInclude Include="Memory.h" />
-    <ClInclude Include="Privileges.h" />
-    <ClInclude Include="Process.h" />
-    <ClInclude Include="Utils.h" />
-    <ClInclude Include="window.h" />
-    <ClInclude Include="WinHandle.h" />
+    <ClInclude Include="include\DllInjection.h" />
+    <ClInclude Include="include\Injector.h" />
+    <ClInclude Include="include\inspector.h" />
+    <ClInclude Include="include\Memory.h" />
+    <ClInclude Include="include\ModuleResolver.h" />
+    <ClInclude Include="include\Privileges.h" />
+    <ClInclude Include="include\Process.h" />
+    <ClInclude Include="include\ProcessMemory.h" />
+    <ClInclude Include="include\ProcessThread.h" />
+    <ClInclude Include="include\Utils.h" />
+    <ClInclude Include="include\window.h" />
+    <ClInclude Include="include\WinHandle.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="imgui.ini" />
+    <None Include="README.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -6,9 +6,9 @@
 // - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
-#include "external/imgui/imgui.h"
-#include "external/imgui/imgui_impl_dx12.h"
-#include "external/imgui/imgui_impl_win32.h"
+#include "../external/imgui/imgui.h"
+#include "../external/imgui/imgui_impl_dx12.h"
+#include "../external/imgui/imgui_impl_win32.h"
 #include <d3d12.h>
 #include <dxgi1_5.h>
 #include <tchar.h>
@@ -106,10 +106,10 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 int run(int argc, char** argv) {
 	// Make process DPI aware and obtain main monitor scale
 	ImGui_ImplWin32_EnableDpiAwareness();
-	float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
+	float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
 
 	// Create application window
-	WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
+	WNDCLASSEXW wc = {sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr};
 	::RegisterClassExW(&wc);
 	HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"Process Toolkit", WS_OVERLAPPEDWINDOW, 100, 100, (int)(1280 * main_scale), (int)(800 * main_scale), nullptr, nullptr, wc.hInstance, nullptr);
 
@@ -271,7 +271,7 @@ int run(int argc, char** argv) {
 		g_pd3dCommandList->ResourceBarrier(1, &barrier);
 
 		// Render Dear ImGui graphics
-		const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
+		const float clear_color_with_alpha[4] = {clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w};
 		g_pd3dCommandList->ClearRenderTargetView(g_mainRenderTargetDescriptor[backBufferIdx], clear_color_with_alpha, 0, nullptr);
 		g_pd3dCommandList->OMSetRenderTargets(1, &g_mainRenderTargetDescriptor[backBufferIdx], FALSE, nullptr);
 		g_pd3dCommandList->SetDescriptorHeaps(1, &g_pd3dSrvDescHeap);
@@ -351,7 +351,7 @@ bool CreateDeviceD3D(HWND hWnd) {
 
 		// Disable breaking on this warning because of a suspected bug in the D3D12 SDK layer, see #9084 for details.
 		const int D3D12_MESSAGE_ID_FENCE_ZERO_WAIT_ = 1424; // not in all copies of d3d12sdklayers.h
-		D3D12_MESSAGE_ID disabledMessages[] = { (D3D12_MESSAGE_ID)D3D12_MESSAGE_ID_FENCE_ZERO_WAIT_ };
+		D3D12_MESSAGE_ID disabledMessages[] = {(D3D12_MESSAGE_ID)D3D12_MESSAGE_ID_FENCE_ZERO_WAIT_};
 		D3D12_INFO_QUEUE_FILTER filter = {};
 		filter.DenyList.NumIDs = 1;
 		filter.DenyList.pIDList = disabledMessages;
@@ -492,10 +492,9 @@ FrameContext* WaitForNextFrameContext() {
 	FrameContext* frame_context = &g_frameContext[g_frameIndex % APP_NUM_FRAMES_IN_FLIGHT];
 	if (g_fence->GetCompletedValue() < frame_context->FenceValue) {
 		g_fence->SetEventOnCompletion(frame_context->FenceValue, g_fenceEvent);
-		HANDLE waitableObjects[] = { g_hSwapChainWaitableObject, g_fenceEvent };
+		HANDLE waitableObjects[] = {g_hSwapChainWaitableObject, g_fenceEvent};
 		::WaitForMultipleObjects(2, waitableObjects, TRUE, INFINITE);
-	}
-	else
+	} else
 		::WaitForSingleObject(g_hSwapChainWaitableObject, INFINITE);
 
 	return frame_context;
@@ -514,23 +513,23 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 		return true;
 
 	switch (msg) {
-	case WM_SIZE:
-		if (g_pd3dDevice != nullptr && wParam != SIZE_MINIMIZED) {
-			CleanupRenderTarget();
-			DXGI_SWAP_CHAIN_DESC1 desc = {};
-			g_pSwapChain->GetDesc1(&desc);
-			HRESULT result = g_pSwapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), desc.Format, desc.Flags);
-			IM_ASSERT(SUCCEEDED(result) && "Failed to resize swapchain.");
-			CreateRenderTarget();
-		}
-		return 0;
-	case WM_SYSCOMMAND:
-		if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
+		case WM_SIZE:
+			if (g_pd3dDevice != nullptr && wParam != SIZE_MINIMIZED) {
+				CleanupRenderTarget();
+				DXGI_SWAP_CHAIN_DESC1 desc = {};
+				g_pSwapChain->GetDesc1(&desc);
+				HRESULT result = g_pSwapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), desc.Format, desc.Flags);
+				IM_ASSERT(SUCCEEDED(result) && "Failed to resize swapchain.");
+				CreateRenderTarget();
+			}
 			return 0;
-		break;
-	case WM_DESTROY:
-		::PostQuitMessage(0);
-		return 0;
+		case WM_SYSCOMMAND:
+			if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
+				return 0;
+			break;
+		case WM_DESTROY:
+			::PostQuitMessage(0);
+			return 0;
 	}
 	return ::DefWindowProcW(hWnd, msg, wParam, lParam);
 }

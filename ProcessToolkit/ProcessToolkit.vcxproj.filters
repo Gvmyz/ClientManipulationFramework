@@ -25,23 +25,14 @@
     <Filter Include="Header Files\external\imgui">
       <UniqueIdentifier>{39020105-e5f2-49cb-ad4a-a1049cdc4da2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\outdated">
+      <UniqueIdentifier>{df2b6b0f-a6a9-419b-ba16-123110630262}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\outdated">
+      <UniqueIdentifier>{79d01da1-fe0d-4023-947f-6c87053ed8bb}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="WinHandle.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Process.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="inspector.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="window.cpp">
-      <Filter>Source Files\UI</Filter>
-    </ClCompile>
     <ClCompile Include="external\imgui\imgui.cpp">
       <Filter>Source Files\external</Filter>
     </ClCompile>
@@ -63,29 +54,44 @@
     <ClCompile Include="external\imgui\imgui_widgets.cpp">
       <Filter>Source Files\external</Filter>
     </ClCompile>
-    <ClCompile Include="Memory.cpp">
+    <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Privileges.cpp">
+    <ClCompile Include="src\window.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Injector.cpp">
+    <ClCompile Include="src\WinHandle.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ProcessMemory.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\DllInjection.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ProcessThread.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ModuleResolver.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Injector.cpp">
+      <Filter>Source Files\outdated</Filter>
+    </ClCompile>
+    <ClCompile Include="src\inspector.cpp">
+      <Filter>Source Files\outdated</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Memory.cpp">
+      <Filter>Source Files\outdated</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Privileges.cpp">
+      <Filter>Source Files\outdated</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Process.cpp">
+      <Filter>Source Files\outdated</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="WinHandle.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Process.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="inspector.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="window.h">
-      <Filter>Source Files\UI</Filter>
-    </ClInclude>
     <ClInclude Include="external\imgui\imconfig.h">
       <Filter>Header Files\external\imgui</Filter>
     </ClInclude>
@@ -110,17 +116,45 @@
     <ClInclude Include="external\imgui\imgui_impl_win32.h">
       <Filter>Header Files\external\imgui</Filter>
     </ClInclude>
-    <ClInclude Include="Memory.h">
+    <ClInclude Include="include\Utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Privileges.h">
+    <ClInclude Include="include\window.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Injector.h">
+    <ClInclude Include="include\WinHandle.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Utils.h">
+    <ClInclude Include="include\ProcessMemory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\DllInjection.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ProcessThread.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ModuleResolver.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Injector.h">
+      <Filter>Header Files\outdated</Filter>
+    </ClInclude>
+    <ClInclude Include="include\inspector.h">
+      <Filter>Header Files\outdated</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Memory.h">
+      <Filter>Header Files\outdated</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Privileges.h">
+      <Filter>Header Files\outdated</Filter>
+    </ClInclude>
+    <ClInclude Include="include\Process.h">
+      <Filter>Header Files\outdated</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+    <None Include="imgui.ini" />
   </ItemGroup>
 </Project>

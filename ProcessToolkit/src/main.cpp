@@ -1,17 +1,21 @@
+#include <Windows.h>
+
+#include <cstdint>
+#include <format>
 #include <iostream>
-
-#include <windows.h>
-#include <psapi.h>
-
-#include "inspector.h"
-#include "window.h"
-#include "Memory.h"
-#include <vector>	
-#include "WinHandle.h"
+#include <optional>
+#include <string>
 #include <string_view>
-#include "Process.h"
-#include "Injector.h"
+
+#include "WinHandle.h"
+#include "ProcessMemory.h"
+#include "DllInjection.h"
+#include "Memory.h"
 #include "Utils.h"
+
+
+#include "Injector.h"
+#include "Process.h"
 
 
 void print_memory_info(const PT::MemoryInfo& mbi) {
@@ -32,21 +36,96 @@ void print_memory_infos(const std::vector<PT::MemoryInfo>& memory_infos) {
 	}
 }
 
-void print_processes() {
-	const auto processes = PT::get_processes();
+//void print_processes() {
+//	const auto processes = PT::get_processes();
+//
+//	// Print the name and process identifier for each process.
+//	for (const auto pid : processes) {
+//		if (const auto path = PT::get_process_image_path(pid)) {
+//			std::wcout << L"PID: " << pid << L" | " << *path << L'\n';
+//		}
+//	}
+//}
 
-	// Print the name and process identifier for each process.
-	for (const auto pid : processes) {
-		if (const auto path = PT::get_process_image_path(pid)) {
-			std::wcout << L"PID: " << pid << L" | " << *path << L'\n';
-		}
+int wmain(int argc, wchar_t** argv) {
+	PT::Cli::enable_ansi();
+
+	const DWORD pid = 23308;
+
+	const std::wstring dll_path =
+		L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestDll.dll";
+
+	const std::wstring dll_name = L"TestDll.dll";
+	const std::string_view dll_function_name = "RunTest";
+
+	PT::Cli::print_section("Open Target Process");
+
+	auto process = PT::ProcessMemory::open_process(pid);
+
+	PT::Cli::run_step(
+		std::format("Opened process {}", pid),
+		process.valid()
+	);
+
+	if (!process) {
+		return 1;
 	}
+
+	PT::Cli::print_section("Inject DLL");
+
+	auto load_library_result =
+		PT::DllInjection::inject_dll_loadlibrary(process, dll_path);
+
+	PT::Cli::run_step(
+		"Injected DLL",
+		load_library_result.has_value()
+	);
+
+	if (!load_library_result) {
+		return 1;
+	}
+
+	PT::Cli::print_named_hex(
+		"LoadLibraryW return value",
+		*load_library_result
+	);
+
+	PT::Cli::print_section("Find Remote Module");
+
+	auto dll_base = PT::Memory::find_module_base(process, dll_name);
+
+	PT::Cli::run_step(
+		"Found remote module base",
+		dll_base.has_value()
+	);
+
+	if (!dll_base) {
+		return 1;
+	}
+
+	PT::Cli::print_named_hex("Remote DLL base", *dll_base);
+
+	PT::Cli::print_section("Call Exported Function");
+
+	bool call_result = PT::DllInjection::call_exported_function(
+		process,
+		dll_path,
+		*dll_base,
+		dll_function_name
+	);
+
+	PT::Cli::run_step(
+		std::format("Called function {}", dll_function_name),
+		call_result
+	);
+
+	return call_result ? 0 : 1;
 }
 
 
-int main(int argc, char** argv) {
+/*int main(int argc, char** argv) {
 	PT::Cli::enable_ansi();
-	const unsigned int ppid = 30272;
+	const unsigned int ppid = 31880;
 	const std::uintptr_t val_address = 0x00000089752FF850ULL;
 	const std::uintptr_t hello_address = 0x00007FF7640D1000ULL;
 	const std::wstring_view dll_path{L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestDll.dll"};
@@ -77,23 +156,6 @@ int main(int argc, char** argv) {
 	PT::Cli::run_step(std::format("Called function {}", dll_function_name), injection_result);
 
 	return 0;
-	//PT::Injector::unload_dll(proc, L"C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ProcessToolkit\\x64\\Release\\TestDll.dll");
 
-	/*PT::Memory::create_thread(proc, hello_address);*/
-
-	/*if (PT::Memory::free_memory(proc, *allocated, 0, MEM_RELEASE)) {
-		std::cout << "[+] Successfully freed memory at 0x" << std::hex << *allocated << "\n";
-	} else {
-		std::cerr << "Failed to free memory\n";
-		std::cerr << GetLastError() << "\n";
-	}
-
-	std::cout << "\n[*]Memory region in the target process:\n";
-	if (auto mem = PT::Memory::get_memory_info(proc, *allocated)) {
-		print_memory_info(*mem);
-	} else {
-		std::cerr << "Failed to get memory info\n";
-	}*/
-
-}
+}*/
 

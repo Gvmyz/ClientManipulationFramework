@@ -42,6 +42,7 @@ The project focuses on low-level process interaction, telemetry collection, runt
 | `Telemetry` | ETW-based telemetry collector and runtime monitoring |
 | `TestDll` | Test DLL used for injection experiments |
 | `TestTarget` | Target application used during controlled experiments |
+| `experiments` | Manifest-driven orchestration for repeatable thesis runs |
 
 ## Research Context
 
@@ -65,6 +66,10 @@ Requirements:
 
 Open the solution: **ClientManipulationFramework.sln**  
 Build using: **x64 Release**
+
+## Experiments
+
+Repeatable runs are defined in `experiments/manifests/` and executed through `experiments/Run-Experiment.ps1`. The runner starts the target, launches telemetry, runs the manipulation step, and writes a per-run manifest alongside the telemetry output.
 
 ## Disclaimer
 

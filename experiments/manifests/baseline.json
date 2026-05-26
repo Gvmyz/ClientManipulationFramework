@@ -1,0 +1,32 @@
+{
+  "name": "baseline",
+  "description": "Baseline trace of the test target without manipulation. The target is started and observed for approximately 10 seconds.",
+  "providerGuid": "{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}",
+  "sessionName": "ClientManipulationFramework",
+  "timings": {
+    "warmupSeconds": 10,
+    "cooldownSeconds": 0
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Debug\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Debug\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "manipulation": {
+    "executable": "C:\\Windows\\System32\\cmd.exe",
+    "workingDirectory": "C:\\Windows\\System32",
+    "commandLineTemplate": "/c exit 0"
+  },
+  "metadata": {
+    "label": "baseline",
+    "technique": "none",
+    "target": "TestTarget.exe",
+    "extra": {
+      "notes": "Baseline run without DLL injection or manipulation."
+    }
+  }
+}

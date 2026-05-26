@@ -33,11 +33,13 @@ namespace {
 			<< L"Usage:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid <pid> [--committed] [--private] [--executable]\n"
-			<< L"  " << exe_name << L" inject-loadlibrary --pid <pid> --dll <path> [--module <name>] [--call <export>]\n\n"
+			<< L"  " << exe_name << L" inject-loadlibrary --pid <pid> --dll <path> [--module <name>] [--call <export>]\n"
+			<< L"  " << exe_name << L" inject-manualmap --pid <pid> --dll <path> [--call <export>]\n\n"
 			<< L"Examples:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid 1234 --committed --executable\n"
-			<< L"  " << exe_name << L" inject-loadlibrary --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n";
+			<< L"  " << exe_name << L" inject-loadlibrary --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
+			<< L"  " << exe_name << L" inject-manualmap --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n";
 	}
 
 	std::optional<DWORD> parse_pid(std::wstring_view value) {
@@ -215,6 +217,45 @@ namespace {
 
 		return PT::Cli::run_step(std::format("Called function {}", *options.function_name), call_result) ? 0 : 1;
 	}
+
+	int inject_manualmap(const Options& options) {
+		if (!options.pid) {
+			PT::Cli::print_error("inject-manualmap requires --pid");
+			return 2;
+		}
+		if (!options.dll_path || options.dll_path->empty()) {
+			PT::Cli::print_error("inject-manualmap requires --dll");
+			return 2;
+		}
+
+		PT::Cli::print_section("Open Target Process");
+		auto process = PT::ProcessMemory::open_process(*options.pid);
+		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
+			return 1;
+		}
+
+		PT::Cli::print_section("Manual Map DLL");
+		auto map_result = PT::DllInjection::inject_dll_manualmap(process, *options.dll_path);
+		if (!PT::Cli::run_step("Manually mapped DLL", map_result.has_value())) {
+			return 1;
+		}
+
+		PT::Cli::print_named_hex("Mapped image base", *map_result);
+
+		if (!options.function_name) {
+			return 0;
+		}
+
+		PT::Cli::print_section("Call Exported Function");
+		const bool call_result = PT::DllInjection::call_exported_function(
+			process,
+			*options.dll_path,
+			*map_result,
+			*options.function_name
+		);
+
+		return PT::Cli::run_step(std::format("Called function {}", *options.function_name), call_result) ? 0 : 1;
+	}
 }
 
 int wmain(int argc, wchar_t** argv) {
@@ -246,6 +287,9 @@ int wmain(int argc, wchar_t** argv) {
 	}
 	if (command == L"inject-loadlibrary") {
 		return inject_loadlibrary(*options);
+	}
+	if (command == L"inject-manualmap") {
+		return inject_manualmap(*options);
 	}
 
 	std::wcerr << L"Unknown command: " << command << L'\n';

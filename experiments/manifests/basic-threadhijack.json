@@ -1,0 +1,32 @@
+{
+  "name": "basic-threadhijack",
+  "description": "Baseline DLL injection run against the test target using thread execution hijacking (MITRE T1055.003).",
+  "providerGuid": "{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}",
+  "sessionName": "ClientManipulationFramework",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 3
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Debug\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Debug\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Debug\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug",
+    "commandLineTemplate": "inject-threadhijack --pid {targetPid} --dll C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ClientManipulationFramework\\ProcessToolkit\\x64\\Debug\\TestDll.dll --call RunTest"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "threadhijack",
+    "target": "TestTarget.exe",
+    "extra": {
+      "notes": "Suspends an existing thread, redirects RIP to a stub that calls LoadLibraryW and returns to the original RIP."
+    }
+  }
+}

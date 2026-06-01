@@ -15,5 +15,11 @@ namespace PT::DllInjection {
 	// Resolves imports, applies base relocations, and calls DllMain via a small loader stub.
 	std::optional<std::uintptr_t> inject_dll_manualmap(const WinHandle& process, const std::wstring_view dll_path);
 
+	// Hijacks an existing thread in the target process to call LoadLibraryW(dll_path)
+	// before returning to its original instruction. Returns the hijacked thread ID
+	// on success. The injected shellcode preserves all volatile registers and flags
+	// so the thread resumes its prior work transparently after the DLL is loaded.
+	std::optional<DWORD> inject_dll_threadhijack(const WinHandle& process, const std::wstring_view dll_path);
+
 	bool call_exported_function(const WinHandle& process, const std::wstring_view& local_dll_path, const std::uintptr_t remote_module_base, const std::string_view& function_name);
 }

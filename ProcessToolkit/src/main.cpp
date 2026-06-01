@@ -34,12 +34,14 @@ namespace {
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid <pid> [--committed] [--private] [--executable]\n"
 			<< L"  " << exe_name << L" inject-loadlibrary --pid <pid> --dll <path> [--module <name>] [--call <export>]\n"
-			<< L"  " << exe_name << L" inject-manualmap --pid <pid> --dll <path> [--call <export>]\n\n"
+			<< L"  " << exe_name << L" inject-manualmap --pid <pid> --dll <path> [--call <export>]\n"
+			<< L"  " << exe_name << L" inject-threadhijack --pid <pid> --dll <path> [--module <name>] [--call <export>]\n\n"
 			<< L"Examples:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid 1234 --committed --executable\n"
 			<< L"  " << exe_name << L" inject-loadlibrary --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
-			<< L"  " << exe_name << L" inject-manualmap --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n";
+			<< L"  " << exe_name << L" inject-manualmap --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
+			<< L"  " << exe_name << L" inject-threadhijack --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n";
 	}
 
 	std::optional<DWORD> parse_pid(std::wstring_view value) {
@@ -218,6 +220,55 @@ namespace {
 		return PT::Cli::run_step(std::format("Called function {}", *options.function_name), call_result) ? 0 : 1;
 	}
 
+	int inject_threadhijack(const Options& options) {
+		if (!options.pid) {
+			PT::Cli::print_error("inject-threadhijack requires --pid");
+			return 2;
+		}
+		if (!options.dll_path || options.dll_path->empty()) {
+			PT::Cli::print_error("inject-threadhijack requires --dll");
+			return 2;
+		}
+
+		PT::Cli::print_section("Open Target Process");
+		auto process = PT::ProcessMemory::open_process(*options.pid);
+		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
+			return 1;
+		}
+
+		PT::Cli::print_section("Hijack Thread");
+		auto hijack_result = PT::DllInjection::inject_dll_threadhijack(process, *options.dll_path);
+		if (!PT::Cli::run_step("Hijacked thread for DLL injection", hijack_result.has_value())) {
+			return 1;
+		}
+
+		PT::Cli::print_named_value("Hijacked thread ID", *hijack_result);
+
+		if (!options.function_name) {
+			return 0;
+		}
+
+		const std::wstring module_name = options.module_name.value_or(dll_filename(*options.dll_path));
+
+		PT::Cli::print_section("Find Remote Module");
+		auto dll_base = PT::Memory::find_module_base(process, module_name);
+		if (!PT::Cli::run_step("Found remote module base", dll_base.has_value())) {
+			return 1;
+		}
+
+		PT::Cli::print_named_hex("Remote DLL base", *dll_base);
+
+		PT::Cli::print_section("Call Exported Function");
+		const bool call_result = PT::DllInjection::call_exported_function(
+			process,
+			*options.dll_path,
+			*dll_base,
+			*options.function_name
+		);
+
+		return PT::Cli::run_step(std::format("Called function {}", *options.function_name), call_result) ? 0 : 1;
+	}
+
 	int inject_manualmap(const Options& options) {
 		if (!options.pid) {
 			PT::Cli::print_error("inject-manualmap requires --pid");
@@ -290,6 +341,9 @@ int wmain(int argc, wchar_t** argv) {
 	}
 	if (command == L"inject-manualmap") {
 		return inject_manualmap(*options);
+	}
+	if (command == L"inject-threadhijack") {
+		return inject_threadhijack(*options);
 	}
 
 	std::wcerr << L"Unknown command: " << command << L'\n';

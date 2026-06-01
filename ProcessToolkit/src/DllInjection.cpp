@@ -5,6 +5,8 @@
 #include <fstream>
 #include <vector>
 
+#include <TlHelp32.h>
+
 #include "ProcessMemory.h"
 #include "ProcessThread.h"
 #include "ModuleResolver.h"
@@ -29,7 +31,7 @@ namespace {
 	//   sub rsp, 0x28  (40):  RSP = 16n - 48 = 16(n-3)       ; aligned
 	//   call rax              ; ABI-correct
 	constexpr std::uint8_t k_loader_stub[] = {
-		0x48, 0x83, 0xEC, 0x28,        // sub  rsp, 0x28
+		0x48, 0x83, 0xEC, 0x28,        // sub  rsp, 0x28 <- shadow space + alignment
 		0x48, 0x8B, 0x41, 0x08,        // mov  rax, [rcx+0x08]  ; dll_main ptr
 		0x45, 0x33, 0xC0,              // xor  r8d, r8d          ; lpvReserved = NULL
 		0xBA, 0x01, 0x00, 0x00, 0x00,  // mov  edx, 1            ; DLL_PROCESS_ATTACH
@@ -38,6 +40,66 @@ namespace {
 		0x48, 0x83, 0xC4, 0x28,        // add  rsp, 0x28
 		0xC3                           // ret
 	};
+
+	// x64 shellcode for thread hijacking — entered with arbitrary register/RSP state
+	// (whatever the hijacked thread had at the moment SuspendThread + SetThreadContext
+	// redirected its RIP here). Calls LoadLibraryW(dll_path) and then jumps back to
+	// the thread's original RIP, leaving every register, flag, and the stack pointer
+	// exactly as the thread expects.
+	//
+	// Three 64-bit immediates are patched in at injection time:
+	//   - offset 27: absolute VA of the wide DLL-path string (sits right after this stub)
+	//   - offset 37: absolute VA of LoadLibraryW in the target (same as in injector, per-boot ASLR)
+	//   - offset 67: original RIP captured via GetThreadContext
+	//
+	// Layout of the stack across the call:
+	//   1. Push RFLAGS + all volatile regs (rax, rcx, rdx, r8-r11) + r12.
+	//   2. Stash post-push RSP in r12 (non-volatile, preserved by LoadLibraryW).
+	//   3. AND rsp, -0x10 then sub 0x20 → 16-aligned with 32 bytes of shadow space.
+	//   4. Call LoadLibraryW.
+	//   5. Restore RSP via r12, pop all saved registers + flags.
+	//   6. push/xchg/ret dance to jump to the original RIP without leaving RAX
+	//      clobbered (we just popped it; the indirect jump would normally need a reg).
+
+	// Save volatile registers but the others are given back to original state by LoadLibraryW's calling convention. We also save R12, which we use to stash the post-push RSP for later restoration.
+	constexpr std::uint8_t k_hijack_stub[] = {
+		/* +00 */ 0x9C,                                              // pushfq
+		/* +01 */ 0x50,                                              // push rax
+		/* +02 */ 0x51,                                              // push rcx
+		/* +03 */ 0x52,                                              // push rdx
+		/* +04 */ 0x41, 0x50,                                        // push r8
+		/* +06 */ 0x41, 0x51,                                        // push r9
+		/* +08 */ 0x41, 0x52,                                        // push r10
+		/* +10 */ 0x41, 0x53,                                        // push r11
+		/* +12 */ 0x41, 0x54,                                        // push r12
+		/* +14 */ 0x49, 0x89, 0xE4,                                  // mov r12, rsp
+		/* +17 */ 0x48, 0x83, 0xE4, 0xF0,                            // and rsp, -0x10
+		/* +21 */ 0x48, 0x83, 0xEC, 0x20,                            // sub rsp, 0x20    ; shadow space
+		/* +25 */ 0x48, 0xB9,                                        // mov rcx, imm64   ; dll path
+		/* +27 */ 0,0,0,0,0,0,0,0,                                   //                  <-- patch (dll_path VA)
+		/* +35 */ 0x48, 0xB8,                                        // mov rax, imm64   ; LoadLibraryW
+		/* +37 */ 0,0,0,0,0,0,0,0,                                   //                  <-- patch (LoadLibraryW VA)
+		/* +45 */ 0xFF, 0xD0,                                        // call rax
+		/* +47 */ 0x4C, 0x89, 0xE4,                                  // mov rsp, r12     ; restore RSP
+		/* +50 */ 0x41, 0x5C,                                        // pop r12
+		/* +52 */ 0x41, 0x5B,                                        // pop r11
+		/* +54 */ 0x41, 0x5A,                                        // pop r10
+		/* +56 */ 0x41, 0x59,                                        // pop r9
+		/* +58 */ 0x41, 0x58,                                        // pop r8
+		/* +60 */ 0x5A,                                              // pop rdx
+		/* +61 */ 0x59,                                              // pop rcx
+		/* +62 */ 0x58,                                              // pop rax
+		/* +63 */ 0x9D,                                              // popfq
+		/* +64 */ 0x50,                                              // push rax         ; stash restored rax
+		/* +65 */ 0x48, 0xB8,                                        // mov rax, imm64   ; original RIP
+		/* +67 */ 0,0,0,0,0,0,0,0,                                   //                  <-- patch (orig RIP)
+		/* +75 */ 0x48, 0x87, 0x04, 0x24,                            // xchg rax, [rsp]  ; swap: [rsp]=orig_rip, rax=orig rax
+		/* +79 */ 0xC3                                               // ret              ; jumps to orig_rip, rsp back to original
+	};
+
+	constexpr std::size_t k_hijack_dll_path_offset = 27;
+	constexpr std::size_t k_hijack_loadlibrary_offset = 37;
+	constexpr std::size_t k_hijack_origrip_offset = 67;
 }
 
 namespace PT::DllInjection {
@@ -314,6 +376,112 @@ namespace PT::DllInjection {
 		}
 
 		return remote_addr;
+	}
+
+	std::optional<DWORD> inject_dll_threadhijack(const WinHandle& process, const std::wstring_view dll_path) {
+		if (!process || dll_path.empty()) return std::nullopt;
+
+		const DWORD pid = GetProcessId(process.get());
+		if (pid == 0) return std::nullopt;
+
+		// Find a thread in the target we can open with the required rights
+		WinHandle thread{};
+		DWORD hijacked_tid = 0;
+		{
+			WinHandle snap{CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)};
+			if (!snap) return std::nullopt;
+
+			THREADENTRY32 te{};
+			te.dwSize = sizeof(te);
+			if (Thread32First(snap.get(), &te)) {
+				do {
+					if (te.th32OwnerProcessID != pid) continue;
+
+					HANDLE h = OpenThread(
+						THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_QUERY_INFORMATION,
+						FALSE,
+						te.th32ThreadID
+					);
+					if (h) {
+						thread = WinHandle(h);
+						hijacked_tid = te.th32ThreadID;
+						break;
+					}
+				} while (Thread32Next(snap.get(), &te));
+			}
+		}
+		if (!thread) return std::nullopt;
+
+		// Resolve LoadLibraryW locally (per-boot ASLR for kernel32 means the VA matches in target)
+		const auto load_library_w = PT::ModuleResolver::resolve_local_function(L"kernel32.dll", "LoadLibraryW");
+		if (!load_library_w) return std::nullopt;
+
+		// Suspend the thread and snapshot its context
+		if (SuspendThread(thread.get()) == static_cast<DWORD>(-1)) return std::nullopt;
+
+		alignas(16) CONTEXT ctx {};
+		ctx.ContextFlags = CONTEXT_ALL;
+		if (!GetThreadContext(thread.get(), &ctx)) {
+			ResumeThread(thread.get());
+			return std::nullopt;
+		}
+		// User-mode RIP the thread will execute next (What we want to overwrite)
+		const std::uintptr_t original_rip = ctx.Rip;
+
+		// Allocate remote memory: [shellcode | dll_path_w]
+		const SIZE_T path_bytes = (dll_path.size() + 1) * sizeof(wchar_t);
+		const SIZE_T stub_bytes = sizeof(k_hijack_stub);
+		const SIZE_T total_bytes = stub_bytes + path_bytes;
+
+		void* remote_mem = PT::ProcessMemory::remote_alloc(process, total_bytes, PAGE_EXECUTE_READWRITE);
+		if (!remote_mem) {
+			ResumeThread(thread.get());
+			return std::nullopt;
+		}
+		const auto remote_base = reinterpret_cast<std::uintptr_t>(remote_mem);
+		const auto remote_path = remote_base + stub_bytes;
+
+		// Build patched shellcode in a local buffer
+		std::vector<std::uint8_t> stub(k_hijack_stub, k_hijack_stub + stub_bytes);
+
+		const auto load_library_va = reinterpret_cast<std::uintptr_t>(load_library_w);
+		std::memcpy(stub.data() + k_hijack_dll_path_offset, &remote_path, sizeof(std::uintptr_t));
+		std::memcpy(stub.data() + k_hijack_loadlibrary_offset, &load_library_va, sizeof(std::uintptr_t));
+		std::memcpy(stub.data() + k_hijack_origrip_offset, &original_rip, sizeof(std::uintptr_t));
+
+		// Write the shellcode and the wide DLL path into the target
+		const bool wrote =
+			PT::ProcessMemory::remote_write(process, remote_mem, stub.data(), stub_bytes) &&
+			PT::ProcessMemory::remote_write(process,
+											reinterpret_cast<void*>(remote_path), dll_path.data(), path_bytes);
+		if (!wrote) {
+			PT::ProcessMemory::remote_free(process, remote_mem);
+			ResumeThread(thread.get());
+			return std::nullopt;
+		}
+
+		// Redirect RIP to our shellcode (control fields only)
+		ctx.Rip = remote_base;
+		ctx.ContextFlags = CONTEXT_CONTROL;
+		if (!SetThreadContext(thread.get(), &ctx)) {
+			PT::ProcessMemory::remote_free(process, remote_mem);
+			ResumeThread(thread.get());
+			return std::nullopt;
+		}
+
+		// Resume: the hijacked thread runs the stub, loads the DLL, then continues
+		if (ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
+			// Don't free remote_mem — the thread may still execute the stub.
+			return std::nullopt;
+		}
+
+		// Give the hijacked thread a brief window to execute LoadLibraryW so a follow-up
+		// find_module_base in the caller can resolve the new module. Intentionally leak
+		// remote_mem: the stub may run later if the thread was in a long-running syscall.
+		// POSSIBLY USE A CANARY!
+		Sleep(500);
+
+		return hijacked_tid;
 	}
 
 	bool call_exported_function(const WinHandle& process, const std::wstring_view& local_dll_path, const std::uintptr_t remote_module_base, const std::string_view& function_name) {

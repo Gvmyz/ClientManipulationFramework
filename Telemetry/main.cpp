@@ -151,16 +151,26 @@ bool is_process_start_event(const TelemetryEvent& event) {
 }
 
 bool is_thread_event(const TelemetryEvent& event) {
+	// ThreadStart / ThreadStop are live events.
+	// ThreadDCStart / ThreadDCStop are rundown equivalents emitted for threads
+	// that were already running when the ETW session subscribed.
 	return event.task == L"ThreadStart" ||
 		event.task == L"ThreadStop" ||
 		event.name == L"ThreadStart" ||
-		event.name == L"ThreadStop";
+		event.name == L"ThreadStop" ||
+		event.name == L"ThreadDCStart" ||
+		event.name == L"ThreadDCStop";
 }
 
 bool is_image_event(const TelemetryEvent& event) {
+	// ImageLoad is the live event.
+	// ImageDCStart is the rundown equivalent for modules already loaded when the
+	// ETW session subscribed. Both carry the same payload (ImageBase, ImageSize, etc.)
 	return event.task == L"ImageLoad" ||
 		event.name == L"ImageLoad" ||
-		event.opcode == L"Load";
+		event.name == L"ImageDCStart" ||
+		event.opcode == L"Load" ||
+		event.opcode == L"DCStart";
 }
 
 bool should_log_event(const TelemetryEvent& event) {
@@ -322,12 +332,19 @@ int wmain(int argc, wchar_t* argv[]) {
 	}
 
 	status = EnableTraceEx2(hTrace, &guid, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr);
-	wprintf(L"Telemetry started. Provider enabled. Waiting for events...\n");
 	if (status != ERROR_SUCCESS) {
 		printf("Failed to enable trace provider: %u\n", status);
 		return status;
 	}
-	wprintf(L"EnableTraceEx2 status: %lu\n", status);
+
+	// Request a state snapshot (rundown) so the provider emits DCStart events for
+	// every thread and loaded module that already exists in the target process.
+	// Without this, processes that started before the ETW session are invisible:
+	// their ImageLoad and ThreadStart events fired before we were subscribed.
+	// Rundown replays that state on demand so baseline traces are not empty.
+	EnableTraceEx2(hTrace, &guid, EVENT_CONTROL_CODE_CAPTURE_STATE, TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr);
+
+	wprintf(L"Telemetry started. Provider enabled (rundown requested). Waiting for events...\n");
 
 	EVENT_TRACE_LOGFILEW etl = {};
 	etl.LoggerName = const_cast<wchar_t*>(g_config.session_name.c_str());

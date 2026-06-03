@@ -147,6 +147,7 @@
     <ClCompile Include="src\inspector.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\Memory.cpp" />
+    <ClCompile Include="src\MemoryPatch.cpp" />
     <ClCompile Include="src\ModuleResolver.cpp" />
     <ClCompile Include="src\Privileges.cpp" />
     <ClCompile Include="src\Process.cpp" />
@@ -168,6 +169,7 @@
     <ClInclude Include="include\Injector.h" />
     <ClInclude Include="include\inspector.h" />
     <ClInclude Include="include\Memory.h" />
+    <ClInclude Include="include\MemoryPatch.h" />
     <ClInclude Include="include\ModuleResolver.h" />
     <ClInclude Include="include\Privileges.h" />
     <ClInclude Include="include\Process.h" />

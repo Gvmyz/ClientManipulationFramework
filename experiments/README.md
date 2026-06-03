@@ -21,7 +21,7 @@ This folder contains small orchestration assets for thesis runs.
 ## Usage
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\experiments\Run-Experiment.ps1 -ManifestPath .\experiments\manifests\basic-loadlibrary.json
+powershell -ExecutionPolicy Bypass -File .\experiments\Run-Experiment.ps1 -ManifestPath .\experiments\manifests\basic-loadlibrary.json [-KeepWindowsOpen]
 ```
 
 The runner expects the referenced binaries to exist and resolves relative paths from the repository root.

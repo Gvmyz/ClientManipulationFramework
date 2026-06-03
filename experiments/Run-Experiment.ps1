@@ -1,7 +1,13 @@
 [CmdletBinding()]
 param(
 	[Parameter(Mandatory = $true)]
-	[string]$ManifestPath
+	[string]$ManifestPath,
+
+	# When set, the manipulation tool's output is captured to manipulation-output.txt
+	# in the run directory and displayed in a persistent window after the run.
+	# The target process is left alive so you can inspect it (close its window manually).
+	# The runner console stays open with a Read-Host prompt.
+	[switch]$KeepWindowsOpen
 )
 
 $ErrorActionPreference = 'Stop'
@@ -265,20 +271,74 @@ try {
 	Write-Host $resolvedTelemetryExecutable
 	Write-Host (Join-CommandLine $telemetryArguments.ToArray())
 
-	$manipulationTemplate = [string]$manifest.manipulation.commandLineTemplate
-	$manipulationCommandLine = Resolve-Template -Template $manipulationTemplate -Tokens @{
+	# Some experiments need state from inside the target — e.g. external memory
+	# patching needs the address of a target variable. If the target wrote a
+	# sidecar JSON at <targetWorkingDir>\target-info-<pid>.json, load it and
+	# expose every top-level key as a {targetInfo.<key>} token for the
+	# manipulation template. Manifests that don't need this just don't reference
+	# the tokens.
+	$tokens = @{
 		'{targetPid}' = $targetProcess.Id
 		'{runId}' = $runId
 		'{runDirectory}' = $runDirectory
 		'{telemetryOutput}' = $telemetryOutputPath
 	}
 
+	$targetInfoPath = Join-Path $resolvedTargetWorkingDirectory "target-info-$($targetProcess.Id).json"
+	$targetInfo = $null
+	# Brief retry: sidecar appears within milliseconds of target startup, but if
+	# warmup is 0 we may race the target. Try for up to ~2s before giving up.
+	for ($i = 0; $i -lt 20; $i++) {
+		if (Test-Path -LiteralPath $targetInfoPath) {
+			try {
+				$targetInfo = Get-Content -LiteralPath $targetInfoPath -Raw | ConvertFrom-Json
+				break
+			} catch {
+				Start-Sleep -Milliseconds 100
+			}
+		} else {
+			Start-Sleep -Milliseconds 100
+		}
+	}
+	if ($targetInfo) {
+		foreach ($prop in $targetInfo.PSObject.Properties) {
+			$tokens["{targetInfo.$($prop.Name)}"] = [string]$prop.Value
+		}
+	}
+
+	# Move the sidecar into the run directory so it's part of the run's artifacts
+	# rather than polluting the target's working directory.
+	if (Test-Path -LiteralPath $targetInfoPath) {
+		Move-Item -LiteralPath $targetInfoPath -Destination (Join-Path $runDirectory 'target-info.json') -Force
+	}
+
+	$manipulationTemplate = [string]$manifest.manipulation.commandLineTemplate
+	$manipulationCommandLine = Resolve-Template -Template $manipulationTemplate -Tokens $tokens
+
 	Write-Host "Manipulation command:"
 	Write-Host $resolvedManipulationExecutable
 	Write-Host $manipulationCommandLine
 
+	$manipulationOutputPath = Join-Path $runDirectory 'manipulation-output.txt'
 
-	$manipulationProcess = Start-ManagedProcess -Executable $resolvedManipulationExecutable -WorkingDirectory $resolvedManipulationWorkingDirectory -Arguments $manipulationCommandLine
+	if ($KeepWindowsOpen) {
+		# Run the manipulation tool without its own window, capturing stdout+stderr
+		# to a file. A persistent summary window is opened after the run completes.
+		$manipulationProcess = Start-Process `
+			-FilePath $resolvedManipulationExecutable `
+			-ArgumentList $manipulationCommandLine `
+			-WorkingDirectory $resolvedManipulationWorkingDirectory `
+			-RedirectStandardOutput $manipulationOutputPath `
+			-RedirectStandardError "$runDirectory\manipulation-error.txt" `
+			-NoNewWindow `
+			-PassThru
+	} else {
+		$manipulationProcess = Start-ManagedProcess `
+			-Executable $resolvedManipulationExecutable `
+			-WorkingDirectory $resolvedManipulationWorkingDirectory `
+			-Arguments $manipulationCommandLine
+	}
+
 	$result.execution.manipulationPid = $manipulationProcess.Id
 	$result.execution.commands.manipulation = New-CommandLine -Executable $resolvedManipulationExecutable -Arguments $manipulationCommandLine
 	$manipulationProcess.WaitForExit()
@@ -290,11 +350,45 @@ try {
 		Stop-Process -Id $telemetryProcess.Id -Force
 	}
 
-	if ($targetProcess -and -not $targetProcess.HasExited) {
-		Stop-Process -Id $targetProcess.Id -Force
+	if ($KeepWindowsOpen) {
+		# Leave the target window open so you can inspect its state (press SPACE,
+		# observe patched values, etc.). Close the window manually when done.
+		Write-Host ""
+		Write-Host "Target left running (PID $($targetProcess.Id)) — close its window manually." -ForegroundColor Yellow
+
+		# Open a persistent window showing the manipulation tool's captured output.
+		# Write a small batch file so we don't have to chain commands with & inside
+		# a PowerShell string (which trips the parser). The batch file is also a
+		# useful artifact — it stays in the run directory alongside the output.
+		if (Test-Path -LiteralPath $manipulationOutputPath) {
+			$exitCode = $manipulationProcess.ExitCode
+			$batchPath = Join-Path $runDirectory 'show-results.cmd'
+			$batchLines = @(
+				'@echo off',
+				'echo === Manipulation Output ===',
+				'echo.',
+				('type "' + $manipulationOutputPath + '"'),
+				'echo.',
+				('echo === Exit Code: ' + $exitCode + ' ==='),
+				'echo.',
+				'pause'
+			)
+			Set-Content -LiteralPath $batchPath -Value $batchLines -Encoding Ascii
+			Start-Process -FilePath 'cmd.exe' -ArgumentList ('/k "' + $batchPath + '"')
+		}
+	} else {
+		if ($targetProcess -and -not $targetProcess.HasExited) {
+			Stop-Process -Id $targetProcess.Id -Force
+		}
 	}
 
 	Write-FinalManifest -Status 'completed'
+
+	if ($KeepWindowsOpen) {
+		Write-Host ""
+		Write-Host "Run complete. Manifest written to: $finalManifestPath" -ForegroundColor Green
+		Read-Host "Press Enter to close this runner window"
+	}
 }
 catch {
 	if ($telemetryProcess -and -not $telemetryProcess.HasExited) {

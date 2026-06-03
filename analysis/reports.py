@@ -167,6 +167,44 @@ events are captured at all. The ≥10 ImageLoad threshold used for attack runs
 does not apply here — a baseline with 0 ImageLoads and a handful of thread
 rundown events is a valid representation of benign execution.
 
+### Memory patching — expected feature profile
+
+External memory patching (technique "memorypatch") is the first technique in
+the dataset whose ETW signature under the kernel-process provider
+(`Microsoft-Windows-Kernel-Process`) is empty *by design*. The attack performs
+a cross-process `WriteProcessMemory` from outside the target. No new thread is
+created, no new DLL is loaded, no code is executed inside the target. The
+events the current provider surfaces (`ProcessStart`, `ThreadStart`,
+`ThreadStop`, `ImageLoad`) simply do not include memory writes, so the
+behavioral footprint we capture is zero.
+
+Expected profile under the current telemetry:
+
+- `n_image_loads_post_attack` = 0, `n_thread_starts_post_attack` = 0,
+  `n_thread_stops_post_attack` = 0, `n_orphan_threads` = 0,
+  `injected_dll_observed` = False — none of the discriminators for injection
+  techniques fire, because there is no injection.
+- `n_events_total` may still be small but non-zero from the target's startup
+  rundown (same ETW initialization timing as baseline).
+
+This empty trace **is** the thesis finding for this technique class. To
+distinguish "the patcher ran cleanly and produced no events" from "the patcher
+crashed and we have nothing to interpret," the pipeline reads
+`manipulation_exit_code` directly from the manifest. For memorypatch runs:
+
+- `is_valid_run`    = (manipulation tool exited with code 0)
+- `is_complete_run` = (manipulation tool exited with code 0)
+
+The ≥10 ImageLoad threshold used for injection techniques does not apply, and
+the "any events" rule used for baseline does not either — both would
+misclassify a successful patch as incomplete.
+
+The natural follow-up — and the next phase of work — is to extend the
+telemetry collector to a provider that *does* surface memory-write activity
+(Microsoft-Windows-Threat-Intelligence, or Sysmon events 8/10), then re-run
+the same manifest and observe what events appear above the baseline. The gap
+between the two configurations is what makes external patching detectable.
+
 ## Known limitations and follow-up
 
 1. Sample size for thread hijacking is n=1; results must be confirmed with

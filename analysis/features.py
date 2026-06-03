@@ -27,6 +27,65 @@ def _split_at_attack(events: pd.DataFrame, attack_started_at) -> tuple[pd.DataFr
     return before, after
 
 
+# Techniques whose ETW signature under the kernel-process provider is expected
+# to be empty by design. For these, completeness is judged by the manipulation
+# tool's exit code, not by event counts — the empty trace IS the measurement,
+# and we need a way to distinguish "tool ran cleanly, telemetry blind" from
+# "tool crashed before doing anything." Extend this set when adding the next
+# technique class whose effect lives below the current provider's visibility
+# (e.g. read-only memory inspection, named-pipe IPC).
+EMPTY_TRACE_TECHNIQUES = frozenset({"memorypatch"})
+
+
+def _classify_completeness(
+    technique: str,
+    image_loads_total: int,
+    manipulation_exit_code,
+    n_events: int,
+) -> tuple[bool, bool]:
+    """Return (is_valid_run, is_complete_run) for one run.
+
+    Validity tiers:
+      is_valid_run    - the experiment produced *some* signal we can reason about.
+                        For event-producing techniques: at least one event landed.
+                        For empty-trace techniques:    the manipulation tool exited cleanly.
+      is_complete_run - the experiment captured enough to be reported as a
+                        finished data point of its technique class.
+
+    The three technique classes:
+
+    1. ``none`` (baseline) — TestTarget runs untouched. Few events are expected
+       (the ETW session usually misses startup DLL loads), so a single rundown
+       event is enough to confirm the trace window was open and flushed.
+
+    2. ``memorypatch`` and other ``EMPTY_TRACE_TECHNIQUES`` — the technique is
+       invisible to the kernel-process provider on purpose. The empty trace is
+       the finding. Completeness is "the tool we ran exited with code 0."
+       A non-zero exit means the patch failed (bad address, permission denied,
+       process gone) and we can't claim the empty trace as evidence.
+
+    3. Everything else (injection techniques: loadlibrary, threadhijack,
+       manualmap) — a successful injection drags in TestDll.dll plus its
+       20+ DLL dependency cascade, so ImageLoad count is a reliable proxy.
+       The ≥10 threshold sits in the gap between failed runs (0-6 loads) and
+       successful ones (20+).
+    """
+    is_valid_event_based = n_events > 0
+    is_valid_exit_based = manipulation_exit_code == 0
+
+    if technique in ("none", ""):
+        return is_valid_event_based, is_valid_event_based
+
+    if technique in EMPTY_TRACE_TECHNIQUES:
+        # For an empty-trace technique, both tiers are exit-code-driven: a
+        # successful tool run IS a complete experiment, regardless of whether
+        # any events were recorded.
+        return is_valid_exit_based, is_valid_exit_based
+
+    # Injection techniques: event-count based.
+    return is_valid_event_based, bool(image_loads_total >= 10)
+
+
 def compute_run_features(
     run_meta: pd.Series,
     events: pd.DataFrame,
@@ -44,27 +103,14 @@ def compute_run_features(
     orphans = detectors.orphan_threads(events)
     orphan_count = int(len(orphans))
 
-    # Two-tier validity:
-    #   is_valid_run    - produced any events at all (excludes pure failures)
-    #   is_complete_run - captured enough data to represent a complete experiment
-    #
-    # For attack techniques the completeness threshold is ≥10 ImageLoad events.
-    # A successful injection loads TestDll.dll and its dependency cascade (20+
-    # DLLs); a failed or partial trace captures 0-6. The threshold sits cleanly
-    # in the gap between those two populations.
-    #
-    # For baseline (technique == "none") there is no injection and therefore no
-    # DLL cascade. TestTarget.exe itself loads only a handful of DLLs at startup,
-    # and the ETW session often misses those because it starts slightly after the
-    # process. A baseline run is considered complete when it produced any events
-    # at all — even a few ThreadStart/ThreadStop rundown events confirm the trace
-    # window was open and the telemetry buffer was flushed correctly.
     technique = (run_meta.get("technique") or "").lower().strip()
-    is_valid = bool(len(events) > 0)
-    if technique in ("none", ""):
-        is_complete = is_valid
-    else:
-        is_complete = bool(image_loads_total >= 10)
+    manipulation_exit_code = run_meta.get("manipulation_exit_code")
+    is_valid, is_complete = _classify_completeness(
+        technique=technique,
+        image_loads_total=image_loads_total,
+        manipulation_exit_code=manipulation_exit_code,
+        n_events=len(events),
+    )
 
     return {
         "run_id": run_meta["run_id"],
@@ -72,6 +118,8 @@ def compute_run_features(
         "label": run_meta.get("label"),
         "is_valid_run": is_valid,
         "is_complete_run": is_complete,
+        "manipulation_exit_code": manipulation_exit_code,
+        "manipulation_succeeded": bool(manipulation_exit_code == 0),
         "n_events_total": int(len(events)),
         "n_image_loads_total": image_loads_total,
         "n_image_loads_post_attack": image_loads_post,

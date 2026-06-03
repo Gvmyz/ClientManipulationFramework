@@ -113,6 +113,11 @@ def load_run_metadata(run: RunPaths) -> dict:
         "status": execution.get("status"),
         "target_pid": execution.get("targetPid"),
         "manipulation_pid": execution.get("manipulationPid"),
+        # Exit code of the manipulation tool, as recorded by Run-Experiment.ps1.
+        # Surfaced as its own column so techniques whose ETW signature is empty by
+        # design (e.g. external memory patching) can still be validated as
+        # "tool ran cleanly" vs "tool crashed" — see features.py:compute_run_features.
+        "manipulation_exit_code": execution.get("manipulationExitCode"),
         "started_at": started_at,
         "attack_started_at": attack_started_at,
         "manifest_path": str(run.manifest),

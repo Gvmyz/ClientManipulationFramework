@@ -1,0 +1,37 @@
+{
+  "name": "basic-patch-data+sysmon",
+  "description": "Same external memory patch as basic-patch-data, but with Sysmon subscribed alongside Microsoft-Windows-Kernel-Process. Hypothesis: kernel-process emits nothing (already confirmed in earlier runs); Sysmon emits a ProcessAccess event (Event 10) for ProcessToolkit opening a handle to TestTarget with PROCESS_VM_WRITE in the desired-access mask. This is the first run in which external memory patching becomes visible to the telemetry pipeline.",
+  "sessionName": "ClientManipulationFramework",
+  "providers": [
+    { "guid": "{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 3
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Debug\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Debug\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Debug\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug",
+    "commandLineTemplate": "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000 --verify"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "memorypatch",
+    "target": "TestTarget.exe",
+    "extra": {
+      "variant": "data",
+      "providerSet": "kernel-process+sysmon",
+      "notes": "Requires Sysmon installed with experiments/sysmon-config.xml. Without Sysmon the run is equivalent to basic-patch-data (empty trace)."
+    }
+  }
+}

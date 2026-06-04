@@ -1,0 +1,62 @@
+<!--
+  Minimal Sysmon configuration for the ClientManipulationFramework experiments.
+
+  Scope: TestTarget.exe and ProcessToolkit.exe only. Everything else is dropped
+  at the source so the Telemetry consumer sees a small, focused event stream.
+
+  Events enabled (chosen to span every technique in the manipulation matrix):
+
+    Event 1  ProcessCreate       Confirms ProcessToolkit / TestTarget launches.
+    Event 7  ImageLoad           Mirror of kernel-process ImageLoad; lets us
+                                 cross-check that both providers see the same
+                                 DLL cascade after an injection.
+    Event 8  CreateRemoteThread  Canonical signal for LoadLibrary-style
+                                 injection. Surfaces source PID, target PID,
+                                 and start address — strictly more than the
+                                 kernel-process ThreadStart event provides.
+    Event 10 ProcessAccess       The headline signal for this thesis. Fires on
+                                 every cross-process OpenProcess that includes
+                                 PROCESS_VM_WRITE / PROCESS_VM_OPERATION /
+                                 PROCESS_CREATE_THREAD. This is what makes
+                                 external memory patching detectable: there is
+                                 no DLL load, no thread, only the handle open.
+    Event 25 ProcessTampering    Catches process hollowing / image replacement.
+                                 Not used by the current techniques but enabled
+                                 for forward compatibility.
+
+  Schema version 4.90 matches Sysmon 14.x; bump if upgrading.
+-->
+<Sysmon schemaversion="4.90">
+  <EventFiltering>
+    <RuleGroup name="ProcessCreate" groupRelation="or">
+      <ProcessCreate onmatch="include">
+        <Image condition="end with">TestTarget.exe</Image>
+        <Image condition="end with">ProcessToolkit.exe</Image>
+      </ProcessCreate>
+    </RuleGroup>
+
+    <RuleGroup name="ImageLoad" groupRelation="or">
+      <ImageLoad onmatch="include">
+        <Image condition="end with">TestTarget.exe</Image>
+      </ImageLoad>
+    </RuleGroup>
+
+    <RuleGroup name="CreateRemoteThread" groupRelation="or">
+      <CreateRemoteThread onmatch="include">
+        <TargetImage condition="end with">TestTarget.exe</TargetImage>
+      </CreateRemoteThread>
+    </RuleGroup>
+
+    <RuleGroup name="ProcessAccess" groupRelation="or">
+      <ProcessAccess onmatch="include">
+        <TargetImage condition="end with">TestTarget.exe</TargetImage>
+      </ProcessAccess>
+    </RuleGroup>
+
+    <RuleGroup name="ProcessTampering" groupRelation="or">
+      <ProcessTampering onmatch="include">
+        <Image condition="end with">TestTarget.exe</Image>
+      </ProcessTampering>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

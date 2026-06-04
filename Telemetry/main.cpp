@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 #include <windows.h>
 #include <evntrace.h>
 #include <evntcons.h>
@@ -15,12 +16,54 @@
 
 #pragma comment(lib, "tdh.lib")
 
+// One subscribed ETW provider. Telemetry can enable several of them on the same
+// real-time session so a single run produces a merged trace. The friendly name
+// is stamped onto every event the provider emits so downstream analysis can
+// group / filter without round-tripping the GUID.
+struct ProviderSpec {
+	std::wstring guid_string;    // canonical {XXXXXXXX-XXXX-...} form
+	GUID guid{};
+	std::wstring name;           // friendly label, e.g. "KernelProcess", "Sysmon"
+};
+
 struct TelemetryConfig {
-	std::wstring provider_guid;
+	std::vector<ProviderSpec> providers;
 	std::wstring session_name{L"MyTestSession"};
 	std::wstring output_path{L"telemetry.json"};
 	ExperimentMetadata metadata{};
 };
+
+// Built-in friendly names for provider GUIDs we use ourselves. Lets a manifest
+// say `providers: [{ "guid": "..." }]` without spelling out the name — Telemetry
+// fills it in automatically if it recognizes the GUID. Comparison is
+// case-insensitive on the GUID string form.
+static const std::map<std::wstring, std::wstring>& known_provider_names() {
+	static const std::map<std::wstring, std::wstring> table = {
+		{ L"{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", L"KernelProcess" },
+		{ L"{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", L"Sysmon" },
+	};
+	return table;
+}
+
+static std::wstring to_upper(std::wstring s) {
+	for (auto& c : s) c = static_cast<wchar_t>(::towupper(c));
+	return s;
+}
+
+static std::wstring lookup_known_name(const std::wstring& guid_string) {
+	const auto upper = to_upper(guid_string);
+	const auto& table = known_provider_names();
+	const auto it = table.find(upper);
+	return it == table.end() ? std::wstring{} : it->second;
+}
+
+// Format a GUID back to its canonical {XXXXXXXX-XXXX-...} string so we can use
+// it as a map key for the per-event provider name lookup.
+static std::wstring guid_to_string(const GUID& guid) {
+	wchar_t buffer[64]{};
+	const int written = StringFromGUID2(guid, buffer, _countof(buffer));
+	return written > 0 ? std::wstring(buffer) : std::wstring{};
+}
 
 // Use it later for filtering events based on process ID or name
 // Extend it (Argument based)
@@ -49,11 +92,22 @@ struct TelemetryFilter {
 TelemetryFilter g_filter{};
 TelemetryConfig g_config{};
 
+// GUID-string (uppercase, canonical) -> friendly provider name. Populated from
+// g_config.providers after parse so OnEvent can stamp event.provider_name in
+// constant time without iterating the providers vector for every event.
+std::map<std::wstring, std::wstring> g_provider_name_by_guid;
+
 void print_usage(const wchar_t* exe_name) {
 	wprintf(
-		L"Usage: %ls <ProviderGuid> [--pid PID] [--name process.exe] [--output path] "
-		L"[--session name] [--run-id id] [--label label] [--technique name] "
-		L"[--target name] [--meta key=value]\n",
+		L"Usage: %ls [<ProviderGuid>] [--provider GUID[:Name]] [--pid PID] [--name process.exe] "
+		L"[--output path] [--session name] [--run-id id] [--label label] [--technique name] "
+		L"[--target name] [--meta key=value]\n"
+		L"\n"
+		L"At least one provider must be supplied. A bare GUID as the first positional argument\n"
+		L"is treated as one provider for backward compatibility; --provider can be repeated to\n"
+		L"subscribe to several on the same session. Each provider may carry a friendly Name\n"
+		L"(suffixed after a colon) that is stamped onto every event it emits. Built-in names\n"
+		L"are used automatically for GUIDs Telemetry recognizes (KernelProcess, Sysmon).\n",
 		exe_name
 	);
 }
@@ -80,6 +134,15 @@ TelemetryEvent build_event(PEVENT_RECORD rec) {
 		std::to_wstring(st.wMilliseconds);
 	event.pid = header.ProcessId;
 	event.tid = header.ThreadId;
+
+	// Stamp the friendly provider name on the event so downstream analysis can
+	// group/filter by provider without rederiving it from the GUID. The lookup
+	// table is built once at startup from g_config.providers.
+	const auto guid_string = to_upper(guid_to_string(header.ProviderId));
+	const auto it = g_provider_name_by_guid.find(guid_string);
+	if (it != g_provider_name_by_guid.end()) {
+		event.provider_name = it->second;
+	}
 
 	ULONG buffer_size = 0;
 	TdhGetEventInformation(rec, 0, nullptr, nullptr, &buffer_size);
@@ -173,7 +236,18 @@ bool is_image_event(const TelemetryEvent& event) {
 		event.opcode == L"DCStart";
 }
 
+// Sysmon's ETW provider only emits events the operator opted into via
+// sysmon-config.xml — its config file already does the filtering. So we admit
+// every Sysmon event unconditionally; trying to second-guess it here would just
+// drop the most interesting cross-process signals (ProcessAccess, etc.)
+bool is_sysmon_event(const TelemetryEvent& event) {
+	return event.provider_name == L"Sysmon";
+}
+
 bool should_log_event(const TelemetryEvent& event) {
+	if (is_sysmon_event(event)) {
+		return true;
+	}
 	return is_process_start_event(event) || is_thread_event(event) || is_image_event(event);
 }
 
@@ -207,18 +281,21 @@ void print_event(const TelemetryEvent& event) {
 }
 
 void WINAPI OnEvent(PEVENT_RECORD rec) {
-	wprintf(L"EVENT RECEIVED\n");
 	auto event = build_event(rec);
 
 	if (!should_log_event(event)) {
 		return;
 	}
-	if (g_filter.pid && g_filter.pid != event.pid) {
+
+	// PID filter: applies to kernel-process events only. Sysmon events are
+	// already filtered at the source by sysmon-config.xml (TargetImage matches
+	// TestTarget.exe), and they record the cross-process source PID in their
+	// header (e.g. ProcessAccess: header.ProcessId == ProcessToolkit, the
+	// TARGET pid is in the properties). Applying the header-PID filter to
+	// Sysmon events would drop exactly the cross-process events we care about.
+	if (!is_sysmon_event(event) && g_filter.pid && g_filter.pid != event.pid) {
 		return;
 	}
-	/*if (!g_filter.matches(event)) {
-		return;
-	}*/
 
 	print_event(event);
 	JsonLogger::instance().write_event(event);
@@ -235,16 +312,55 @@ bool parse_meta_argument(const std::wstring_view value, std::wstring& key, std::
 	return true;
 }
 
+// Parse "<GUID>" or "<GUID>:<Name>" into a ProviderSpec. The GUID must be in
+// canonical curly-brace form ("{XXXXXXXX-XXXX-...}"). If a name is not given,
+// fall back to the known_provider_names() table; if it is also not known, the
+// provider name on emitted events will be empty (still usable, just unlabeled).
+bool parse_provider_spec(const std::wstring& raw, ProviderSpec& spec) {
+	const auto colon = raw.find(L':');
+	const std::wstring guid_part = (colon == std::wstring::npos) ? raw : raw.substr(0, colon);
+	const std::wstring name_part = (colon == std::wstring::npos) ? std::wstring{} : raw.substr(colon + 1);
+
+	GUID parsed{};
+	if (CLSIDFromString(guid_part.c_str(), &parsed) != S_OK) {
+		return false;
+	}
+	spec.guid = parsed;
+	spec.guid_string = guid_to_string(parsed);  // canonical re-formatting
+	spec.name = name_part.empty() ? lookup_known_name(spec.guid_string) : name_part;
+	return true;
+}
+
 bool parse_arguments(int argc, wchar_t* argv[]) {
 	if (argc < 2) {
 		print_usage(argv[0]);
 		return false;
 	}
 
-	g_config.provider_guid = argv[1];
+	int next_arg = 1;
 
-	for (int i = 2; i < argc; ++i) {
-		if (wcscmp(argv[i], L"--pid") == 0 && i + 1 < argc) {
+	// Backward compatibility: a bare GUID as argv[1] (not a --flag) is treated
+	// as the first provider, so existing single-provider manifests keep working
+	// without modification.
+	if (argv[1][0] == L'{') {
+		ProviderSpec spec;
+		if (!parse_provider_spec(argv[1], spec)) {
+			wprintf(L"Invalid provider GUID: %ls\n", argv[1]);
+			return false;
+		}
+		g_config.providers.push_back(std::move(spec));
+		next_arg = 2;
+	}
+
+	for (int i = next_arg; i < argc; ++i) {
+		if (wcscmp(argv[i], L"--provider") == 0 && i + 1 < argc) {
+			ProviderSpec spec;
+			if (!parse_provider_spec(argv[++i], spec)) {
+				wprintf(L"Invalid --provider value: %ls\n", argv[i]);
+				return false;
+			}
+			g_config.providers.push_back(std::move(spec));
+		} else if (wcscmp(argv[i], L"--pid") == 0 && i + 1 < argc) {
 			g_filter.pid = static_cast<DWORD>(std::wcstoul(argv[++i], nullptr, 10));
 		} else if (wcscmp(argv[i], L"--name") == 0 && i + 1 < argc) {
 			g_filter.process_name = argv[++i];
@@ -275,7 +391,26 @@ bool parse_arguments(int argc, wchar_t* argv[]) {
 		}
 	}
 
-	g_config.metadata.provider_guid = g_config.provider_guid;
+	if (g_config.providers.empty()) {
+		wprintf(L"At least one provider is required (positional GUID or --provider).\n");
+		print_usage(argv[0]);
+		return false;
+	}
+
+	// Build the GUID -> name map used by build_event for per-event labeling.
+	for (const auto& p : g_config.providers) {
+		g_provider_name_by_guid[to_upper(p.guid_string)] = p.name;
+	}
+
+	// Comma-join provider GUIDs into the legacy metadata field so existing
+	// downstream tooling (which reads experiment.provider_guid) sees a stable
+	// representation of the full multi-provider session.
+	std::wstring joined;
+	for (const auto& p : g_config.providers) {
+		if (!joined.empty()) joined += L",";
+		joined += p.guid_string;
+	}
+	g_config.metadata.provider_guid = joined;
 	g_config.metadata.session_name = g_config.session_name;
 	g_config.metadata.output_path = g_config.output_path;
 	g_config.metadata.filter_pid = g_filter.pid;
@@ -292,17 +427,10 @@ int wmain(int argc, wchar_t* argv[]) {
 	auto& logger = JsonLogger::init(g_config.output_path);
 	logger.set_experiment_metadata(g_config.metadata);
 
-	GUID guid;
-	if (CLSIDFromString(argv[1], &guid) != S_OK) {
-		printf("Invalid GUID format: %ls\n", argv[1]);
-		return 1;
-	}
-
 	CONTROLTRACE_ID hTrace{0};
 	std::size_t size = sizeof(EVENT_TRACE_PROPERTIES) + (g_config.session_name.size() + 1) * sizeof(wchar_t);
 	auto buffer = std::make_unique<BYTE[]>(size);
 	auto props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(buffer.get());
-	// Why use memset, in what context not needed to use?
 	memset(props, 0, size);
 
 	props->Wnode.BufferSize = static_cast<ULONG>(size);
@@ -331,20 +459,38 @@ int wmain(int argc, wchar_t* argv[]) {
 		return status;
 	}
 
-	status = EnableTraceEx2(hTrace, &guid, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr);
-	if (status != ERROR_SUCCESS) {
-		printf("Failed to enable trace provider: %u\n", status);
-		return status;
+	// Enable each requested provider on the shared session and request a state
+	// snapshot (rundown) from it. Rundown matters for providers like
+	// Microsoft-Windows-Kernel-Process: without it, ImageLoad/ThreadStart events
+	// that fired before we subscribed are permanently lost. For Sysmon the
+	// rundown is a no-op (its events are state changes, not enumerable state)
+	// but issuing the call is harmless.
+	for (const auto& provider : g_config.providers) {
+		GUID guid_copy = provider.guid;  // EnableTraceEx2 takes a non-const pointer
+
+		status = EnableTraceEx2(
+			hTrace, &guid_copy, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+			TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr
+		);
+		if (status != ERROR_SUCCESS) {
+			printf(
+				"Failed to enable provider %ls (status %lu)\n",
+				provider.guid_string.c_str(), status
+			);
+			return status;
+		}
+
+		EnableTraceEx2(
+			hTrace, &guid_copy, EVENT_CONTROL_CODE_CAPTURE_STATE,
+			TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr
+		);
+
+		const auto label = provider.name.empty() ? provider.guid_string : provider.name;
+		wprintf(L"  enabled provider %ls (%ls)\n", label.c_str(), provider.guid_string.c_str());
 	}
 
-	// Request a state snapshot (rundown) so the provider emits DCStart events for
-	// every thread and loaded module that already exists in the target process.
-	// Without this, processes that started before the ETW session are invisible:
-	// their ImageLoad and ThreadStart events fired before we were subscribed.
-	// Rundown replays that state on demand so baseline traces are not empty.
-	EnableTraceEx2(hTrace, &guid, EVENT_CONTROL_CODE_CAPTURE_STATE, TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr);
-
-	wprintf(L"Telemetry started. Provider enabled (rundown requested). Waiting for events...\n");
+	wprintf(L"Telemetry started. %zu provider(s) enabled (rundown requested). Waiting for events...\n",
+		g_config.providers.size());
 
 	EVENT_TRACE_LOGFILEW etl = {};
 	etl.LoggerName = const_cast<wchar_t*>(g_config.session_name.c_str());

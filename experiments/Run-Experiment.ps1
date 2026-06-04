@@ -82,7 +82,11 @@ function Resolve-Template {
 
 function Add-Flag {
 	param(
-		[Parameter(Mandatory = $true)][System.Collections.Generic.List[string]]$Arguments,
+		# [AllowEmptyCollection] is required because PowerShell's parameter binder
+		# rejects empty collections on mandatory parameters. Add-Flag is legitimately
+		# called with a freshly created (empty) list when the first flag to add is
+		# the very first argument (e.g. --provider on a multi-provider manifest).
+		[Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$Arguments,
 		[Parameter(Mandatory = $true)][string]$Name,
 		[Parameter(Mandatory = $true)][object]$Value
 	)
@@ -216,8 +220,29 @@ try {
 	$result.execution.targetPid = $targetProcess.Id
 	$result.execution.commands.target = New-CommandLine -Executable $resolvedTargetExecutable -Arguments ([string]$manifest.target.arguments)
 
+	# Telemetry now supports subscribing to several providers on the same session.
+	# Manifest can express this in either form:
+	#   "providerGuid": "{...}"                        (single, legacy)
+	#   "providers": [ { "guid": "{...}", "name": "KernelProcess" }, ... ]
+	# If both are present, `providers` wins. Each provider becomes one --provider
+	# flag on the Telemetry command line (GUID[:Name]).
 	$telemetryArguments = New-Object 'System.Collections.Generic.List[string]'
-	$telemetryArguments.Add([string]$manifest.providerGuid)
+
+	$providersProperty = $manifest.PSObject.Properties['providers']
+	if ($providersProperty -and $providersProperty.Value) {
+		foreach ($entry in $providersProperty.Value) {
+			$guid = [string]$entry.guid
+			$nameProperty = $entry.PSObject.Properties['name']
+			$name = if ($nameProperty) { [string]$nameProperty.Value } else { '' }
+			$spec = if ([string]::IsNullOrWhiteSpace($name)) { $guid } else { "${guid}:${name}" }
+			Add-Flag -Arguments $telemetryArguments -Name '--provider' -Value $spec
+		}
+	} elseif ($manifest.PSObject.Properties['providerGuid']) {
+		$telemetryArguments.Add([string]$manifest.providerGuid)
+	} else {
+		throw "Manifest must declare either 'providerGuid' or 'providers'."
+	}
+
 	Add-Flag -Arguments $telemetryArguments -Name '--output' -Value $telemetryOutputPath
 	Add-Flag -Arguments $telemetryArguments -Name '--session' -Value ([string]$manifest.sessionName)
 

@@ -1,0 +1,36 @@
+{
+  "name": "baseline+sysmon",
+  "description": "Benign baseline with both providers subscribed. TestTarget runs untouched while ping holds the observation window open. Expected behavior: kernel-process emits its usual handful of rundown events; Sysmon emits a ProcessCreate for TestTarget and possibly a small number of ProcessAccess events from ambient processes (Discord polling, task manager). Used as the negative control for every Sysmon-based detector.",
+  "sessionName": "ClientManipulationFramework",
+  "providers": [
+    { "guid": "{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "timings": {
+    "warmupSeconds": 5,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Debug\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Debug\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "manipulation": {
+    "executable": "C:\\Windows\\System32\\ping.exe",
+    "workingDirectory": "C:\\Windows\\System32",
+    "commandLineTemplate": "-n 6 127.0.0.1"
+  },
+  "metadata": {
+    "label": "baseline",
+    "technique": "none",
+    "target": "TestTarget.exe",
+    "extra": {
+      "providerSet": "kernel-process+sysmon",
+      "notes": "Requires Sysmon installed. Any ProcessAccess events that appear are ambient noise (background apps polling running processes) — useful for characterizing what 'benign' Sysmon traffic to TestTarget looks like."
+    }
+  }
+}

@@ -19,11 +19,8 @@ struct TelemetryEvent {
 	std::wstring opcode;
 	std::wstring task;
 	std::wstring level;
-	// Friendly label of the provider that emitted this event (e.g. "KernelProcess",
-	// "Sysmon"). Populated from rec->EventHeader.ProviderId via a name lookup at
-	// build_event time. Lets the downstream pipeline group/filter by provider
-	// without round-tripping the GUID. Empty if the provider was registered
-	// without a friendly name.
+	// Friendly label of the emitting provider (e.g. "KernelProcess", "Sysmon").
+	// Empty if the provider was registered without a name.
 	std::wstring provider_name;
 	ULONG pid{};
 	ULONG tid{};

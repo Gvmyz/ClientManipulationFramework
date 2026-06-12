@@ -90,6 +90,9 @@
     <ClCompile Include="src\Process.cpp">
       <Filter>Source Files\outdated</Filter>
     </ClCompile>
+    <ClCompile Include="src\MemoryPatch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="external\imgui\imconfig.h">
@@ -151,6 +154,9 @@
     </ClInclude>
     <ClInclude Include="include\Process.h">
       <Filter>Header Files\outdated</Filter>
+    </ClInclude>
+    <ClInclude Include="include\MemoryPatch.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

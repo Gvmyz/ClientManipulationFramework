@@ -12,24 +12,16 @@
 #include "ModuleResolver.h"
 
 namespace {
-	// Passed as the thread argument to the remote loader stub.
+	// Thread argument to the manual-map loader stub.
 	struct LoaderParams {
-		std::uintptr_t image_base;  // remote base of the mapped image (HMODULE)
+		std::uintptr_t image_base;  // HMODULE in the remote process
 		std::uintptr_t dll_main;    // absolute VA of DllMain in the remote process
 	};
 
-	// x64 shellcode — thread entry, RCX = LoaderParams*
-	// Calls DllMain(image_base, DLL_PROCESS_ATTACH, NULL) then returns DllMain's result.
-	//
-	// Microsoft x64 ABI: at the moment a CALL is executed, RSP must be 16-byte aligned.
-	// The stub itself is entered via a CALL (from BaseThreadInitThunk), so on entry
-	//   RSP = 16n - 8
-	// We need RSP = 16n right before `call rax`. We also need 32 bytes of shadow space
-	// above the return address. Total adjustment: 32 (shadow) + 8 (realignment) = 0x28.
-	//
-	//   entry:                RSP = 16n - 8
-	//   sub rsp, 0x28  (40):  RSP = 16n - 48 = 16(n-3)       ; aligned
-	//   call rax              ; ABI-correct
+	// Manual-map loader stub. Entry: RCX = LoaderParams*. Calls
+	// DllMain(image_base, DLL_PROCESS_ATTACH, NULL) and returns its result.
+	// The 0x28 reserves 32 bytes of shadow space + 8 bytes to re-align RSP
+	// to 16 before `call rax` (x64 ABI: aligned at the CALL instruction).
 	constexpr std::uint8_t k_loader_stub[] = {
 		0x48, 0x83, 0xEC, 0x28,        // sub  rsp, 0x28 <- shadow space + alignment
 		0x48, 0x8B, 0x41, 0x08,        // mov  rax, [rcx+0x08]  ; dll_main ptr
@@ -41,27 +33,17 @@ namespace {
 		0xC3                           // ret
 	};
 
-	// x64 shellcode for thread hijacking — entered with arbitrary register/RSP state
-	// (whatever the hijacked thread had at the moment SuspendThread + SetThreadContext
-	// redirected its RIP here). Calls LoadLibraryW(dll_path) and then jumps back to
-	// the thread's original RIP, leaving every register, flag, and the stack pointer
-	// exactly as the thread expects.
+	// Thread-hijack stub. Entered with arbitrary register/RSP state (whatever the
+	// hijacked thread had when SuspendThread + SetThreadContext redirected its RIP
+	// here). Calls LoadLibraryW(dll_path) then jumps back to the original RIP with
+	// every register, flag, and the stack pointer restored.
 	//
-	// Three 64-bit immediates are patched in at injection time:
-	//   - offset 27: absolute VA of the wide DLL-path string (sits right after this stub)
-	//   - offset 37: absolute VA of LoadLibraryW in the target (same as in injector, per-boot ASLR)
-	//   - offset 67: original RIP captured via GetThreadContext
+	// Three 64-bit immediates are patched at injection time (see offsets below):
+	//   +27: dll_path VA, +37: LoadLibraryW VA, +67: original RIP.
 	//
-	// Layout of the stack across the call:
-	//   1. Push RFLAGS + all volatile regs (rax, rcx, rdx, r8-r11) + r12.
-	//   2. Stash post-push RSP in r12 (non-volatile, preserved by LoadLibraryW).
-	//   3. AND rsp, -0x10 then sub 0x20 → 16-aligned with 32 bytes of shadow space.
-	//   4. Call LoadLibraryW.
-	//   5. Restore RSP via r12, pop all saved registers + flags.
-	//   6. push/xchg/ret dance to jump to the original RIP without leaving RAX
-	//      clobbered (we just popped it; the indirect jump would normally need a reg).
-
-	// Save volatile registers but the others are given back to original state by LoadLibraryW's calling convention. We also save R12, which we use to stash the post-push RSP for later restoration.
+	// Flow: save flags + all volatile regs + r12 (stash for RSP), align stack and
+	// reserve shadow space, call LoadLibraryW, restore everything, then a
+	// push/xchg/ret dance to jump indirectly without leaving rax clobbered.
 	constexpr std::uint8_t k_hijack_stub[] = {
 		/* +00 */ 0x9C,                                              // pushfq
 		/* +01 */ 0x50,                                              // push rax
@@ -144,15 +126,17 @@ namespace PT::DllInjection {
 
 		PT::ProcessMemory::remote_free(process, remote_path);
 
-		if (exit_code == 0) return std::nullopt; // LoadLibraryW returns NULL on failure
-
-		return exit_code; // The exit code is the base address of the loaded module in the target process
+		// LoadLibraryW returns NULL on failure; otherwise its return is the
+		// HMODULE (loaded module base) and we get its low 32 bits as the
+		// thread exit code.
+		if (exit_code == 0) return std::nullopt;
+		return exit_code;
 	}
 
 	std::optional<std::uintptr_t> inject_dll_manualmap(const WinHandle& process, const std::wstring_view dll_path) {
 		if (!process || dll_path.empty()) return std::nullopt;
 
-		// --- Read the DLL from disk into a raw file buffer ---
+		// Read the DLL into a raw file buffer.
 		std::ifstream file(std::wstring(dll_path), std::ios::binary | std::ios::ate);
 		if (!file.is_open()) return std::nullopt;
 
@@ -162,7 +146,7 @@ namespace PT::DllInjection {
 		if (!file.read(reinterpret_cast<char*>(file_buf.data()), static_cast<std::streamsize>(file_size)))
 			return std::nullopt;
 
-		// --- Parse and validate PE headers ---
+		// Parse and validate PE headers (we only support x64).
 		PIMAGE_DOS_HEADER dos_hdr = reinterpret_cast<PIMAGE_DOS_HEADER>(file_buf.data());
 		if (dos_hdr->e_magic != IMAGE_DOS_SIGNATURE) return std::nullopt;
 
@@ -175,7 +159,7 @@ namespace PT::DllInjection {
 		const DWORD entry_point_rva = nt_hdrs->OptionalHeader.AddressOfEntryPoint;
 		const auto  pref_base = static_cast<std::uintptr_t>(nt_hdrs->OptionalHeader.ImageBase);
 
-		// --- Build a locally-mapped copy (sections at their virtual addresses) ---
+		// Build a local copy with sections laid out at their virtual addresses.
 		std::vector<std::uint8_t> image(image_size, 0);
 		std::memcpy(image.data(), file_buf.data(), headers_size);
 
@@ -189,12 +173,12 @@ namespace PT::DllInjection {
 			);
 		}
 
-		// --- Allocate remote memory for the mapped image ---
+		// Allocate the image in the target.
 		void* remote_base = PT::ProcessMemory::remote_alloc(process, image_size, PAGE_EXECUTE_READWRITE);
 		if (!remote_base) return std::nullopt;
 		const auto remote_addr = reinterpret_cast<std::uintptr_t>(remote_base);
 
-		// --- Apply base relocations (delta = how much the actual base differs from preferred) ---
+		// Apply base relocations: delta = actual base - preferred base.
 		const std::uintptr_t delta = remote_addr - pref_base;
 		if (delta != 0) {
 			const auto& reloc_dir = nt_hdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
@@ -219,7 +203,7 @@ namespace PT::DllInjection {
 								image.data() + block->VirtualAddress + offset);
 							*patch += static_cast<std::uint32_t>(delta);
 						}
-						// IMAGE_REL_BASED_ABSOLUTE (0) = padding entry, skip
+						// type 0 (IMAGE_REL_BASED_ABSOLUTE) is padding — skip.
 					}
 
 					block = reinterpret_cast<PIMAGE_BASE_RELOCATION>(
@@ -228,9 +212,9 @@ namespace PT::DllInjection {
 			}
 		}
 
-		// --- Resolve imports: write function addresses into the local IAT copy ---
-		// System DLLs (kernel32, user32, ...) load at the same VA in all processes on the
-		// same boot session, so addresses resolved locally are valid in the target.
+		// Resolve imports into the local IAT. System DLLs share their VA across
+		// processes within the same boot session, so addresses resolved here are
+		// valid in the target.
 		const auto& import_dir = nt_hdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
 		if (import_dir.VirtualAddress != 0) {
 			auto* desc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(image.data() + import_dir.VirtualAddress);
@@ -242,8 +226,8 @@ namespace PT::DllInjection {
 					return std::nullopt;
 				}
 
-				// Use the INT (OriginalFirstThunk) for name/ordinal lookup,
-				// patch the IAT (FirstThunk) with resolved addresses.
+				// INT (OriginalFirstThunk) carries the name/ordinal; IAT (FirstThunk)
+				// receives the resolved address.
 				const DWORD int_rva = desc->OriginalFirstThunk ? desc->OriginalFirstThunk : desc->FirstThunk;
 				auto* thunk_int = reinterpret_cast<PIMAGE_THUNK_DATA>(image.data() + int_rva);
 				auto* thunk_iat = reinterpret_cast<PIMAGE_THUNK_DATA>(image.data() + desc->FirstThunk);
@@ -269,21 +253,16 @@ namespace PT::DllInjection {
 			}
 		}
 
-		// --- Copy the fully-patched image into the target process ---
+		// Copy the patched image into the target.
 		if (!PT::ProcessMemory::remote_write(process, remote_base, image.data(), image_size)) {
 			PT::ProcessMemory::remote_free(process, remote_base);
 			return std::nullopt;
 		}
 
-		// --- Force the target to load each imported DLL ---
-		// We resolved import addresses from the injector's address space. For system DLLs
-		// (kernel32, user32, ...) ASLR is per-boot, not per-process, so those addresses
-		// are also valid in the target — but ONLY if the same DLL is actually mapped
-		// there. If e.g. user32 isn't already loaded in the target, the IAT slots we
-		// wrote point into unmapped memory and the first indirect call crashes the target.
-		//
-		// Drive a remote LoadLibraryA per imported DLL, reusing the name string that
-		// already lives at remote_base + desc->Name inside the mapped image.
+		// Force the target to load each imported DLL. The IAT slots we wrote point
+		// at the injector's resolved addresses; those VAs are only valid in the
+		// target if the same DLL is actually mapped there. Drive a remote
+		// LoadLibraryA per import, reusing the name string from the mapped image.
 		if (import_dir.VirtualAddress != 0) {
 			auto load_library_a = reinterpret_cast<LPTHREAD_START_ROUTINE>(
 				PT::ModuleResolver::resolve_local_function(L"kernel32.dll", "LoadLibraryA"));
@@ -304,9 +283,8 @@ namespace PT::DllInjection {
 					PT::ProcessMemory::remote_free(process, remote_base);
 					return std::nullopt;
 				}
-				// LoadLibraryA returns the HMODULE; thread exit code is its low 32 bits.
-				// We don't strictly require it — if the local resolution succeeded the DLL
-				// exists on disk — but a 0 here means the call failed outright in the target.
+				// Thread exit code = low 32 bits of LoadLibraryA's HMODULE return.
+				// 0 means the call failed outright in the target.
 				DWORD load_exit = 0;
 				if (!PT::ProcessThread::get_thread_exit_code(load_thread, load_exit) || load_exit == 0) {
 					PT::ProcessMemory::remote_free(process, remote_base);
@@ -315,10 +293,10 @@ namespace PT::DllInjection {
 			}
 		}
 
-		// --- Call DllMain via a small loader stub executed as a remote thread ---
-		// The stub receives a LoaderParams* in RCX (the thread argument).
+		// Call DllMain via the loader stub running as a remote thread.
+		// RCX = LoaderParams*. No entry point means nothing to call but the image
+		// is mapped — treat as success.
 		if (entry_point_rva == 0) {
-			// No DllMain — nothing to call, but the image is mapped. Treat as success.
 			return remote_addr;
 		}
 		const auto dll_main_addr = remote_addr + entry_point_rva;
@@ -328,7 +306,7 @@ namespace PT::DllInjection {
 		constexpr std::size_t stub_size = sizeof(k_loader_stub);
 		constexpr std::size_t params_size = sizeof(LoaderParams);
 
-		// POSSIBLY Set per-section protections (More real-life)
+		// TODO: apply per-section protections (currently RWX for the whole image).
 		void* remote_stub = PT::ProcessMemory::remote_alloc(
 			process, stub_size + params_size, PAGE_EXECUTE_READWRITE);
 		if (!remote_stub) {
@@ -363,8 +341,8 @@ namespace PT::DllInjection {
 
 		const bool waited = PT::ProcessThread::wait_for_thread(thread) == WAIT_OBJECT_0;
 
-		// Read the stub thread exit code (= DllMain's return value, or an exception code
-		// like 0xC0000005 if the thread crashed). Treat anything other than TRUE as failure.
+		// Stub exit code = DllMain's return value, or an exception code (e.g.
+		// 0xC0000005) on crash. Anything other than TRUE is a failure.
 		DWORD stub_exit = 0;
 		const bool got_exit = PT::ProcessThread::get_thread_exit_code(thread, stub_exit);
 
@@ -384,7 +362,7 @@ namespace PT::DllInjection {
 		const DWORD pid = GetProcessId(process.get());
 		if (pid == 0) return std::nullopt;
 
-		// Find a thread in the target we can open with the required rights
+		// Find any thread in the target we can open with the required rights.
 		WinHandle thread{};
 		DWORD hijacked_tid = 0;
 		{
@@ -412,11 +390,11 @@ namespace PT::DllInjection {
 		}
 		if (!thread) return std::nullopt;
 
-		// Resolve LoadLibraryW locally (per-boot ASLR for kernel32 means the VA matches in target)
+		// Per-boot ASLR for kernel32 means the local VA is valid in the target.
 		const auto load_library_w = PT::ModuleResolver::resolve_local_function(L"kernel32.dll", "LoadLibraryW");
 		if (!load_library_w) return std::nullopt;
 
-		// Suspend the thread and snapshot its context
+		// Suspend the thread and snapshot its context.
 		if (SuspendThread(thread.get()) == static_cast<DWORD>(-1)) return std::nullopt;
 
 		alignas(16) CONTEXT ctx {};
@@ -425,10 +403,10 @@ namespace PT::DllInjection {
 			ResumeThread(thread.get());
 			return std::nullopt;
 		}
-		// User-mode RIP the thread will execute next (What we want to overwrite)
+		// User-mode RIP we'll overwrite (and restore from inside the stub).
 		const std::uintptr_t original_rip = ctx.Rip;
 
-		// Allocate remote memory: [shellcode | dll_path_w]
+		// One remote allocation laid out as [shellcode | wide dll_path].
 		const SIZE_T path_bytes = (dll_path.size() + 1) * sizeof(wchar_t);
 		const SIZE_T stub_bytes = sizeof(k_hijack_stub);
 		const SIZE_T total_bytes = stub_bytes + path_bytes;
@@ -441,7 +419,7 @@ namespace PT::DllInjection {
 		const auto remote_base = reinterpret_cast<std::uintptr_t>(remote_mem);
 		const auto remote_path = remote_base + stub_bytes;
 
-		// Build patched shellcode in a local buffer
+		// Patch the three 64-bit immediates into a local copy of the stub.
 		std::vector<std::uint8_t> stub(k_hijack_stub, k_hijack_stub + stub_bytes);
 
 		const auto load_library_va = reinterpret_cast<std::uintptr_t>(load_library_w);
@@ -449,7 +427,7 @@ namespace PT::DllInjection {
 		std::memcpy(stub.data() + k_hijack_loadlibrary_offset, &load_library_va, sizeof(std::uintptr_t));
 		std::memcpy(stub.data() + k_hijack_origrip_offset, &original_rip, sizeof(std::uintptr_t));
 
-		// Write the shellcode and the wide DLL path into the target
+		// Write shellcode + DLL path into the target.
 		const bool wrote =
 			PT::ProcessMemory::remote_write(process, remote_mem, stub.data(), stub_bytes) &&
 			PT::ProcessMemory::remote_write(process,
@@ -460,7 +438,7 @@ namespace PT::DllInjection {
 			return std::nullopt;
 		}
 
-		// Redirect RIP to our shellcode (control fields only)
+		// Redirect RIP to the stub. CONTROL-only update keeps the rest intact.
 		ctx.Rip = remote_base;
 		ctx.ContextFlags = CONTEXT_CONTROL;
 		if (!SetThreadContext(thread.get(), &ctx)) {
@@ -469,16 +447,15 @@ namespace PT::DllInjection {
 			return std::nullopt;
 		}
 
-		// Resume: the hijacked thread runs the stub, loads the DLL, then continues
+		// Resume: the hijacked thread runs the stub, loads the DLL, then jumps back.
 		if (ResumeThread(thread.get()) == static_cast<DWORD>(-1)) {
 			// Don't free remote_mem — the thread may still execute the stub.
 			return std::nullopt;
 		}
 
-		// Give the hijacked thread a brief window to execute LoadLibraryW so a follow-up
-		// find_module_base in the caller can resolve the new module. Intentionally leak
-		// remote_mem: the stub may run later if the thread was in a long-running syscall.
-		// POSSIBLY USE A CANARY!
+		// Brief wait so a follow-up find_module_base in the caller can see the new
+		// module. We intentionally leak remote_mem: the stub may run later if the
+		// hijacked thread was in a long syscall. TODO: use a canary instead.
 		Sleep(500);
 
 		return hijacked_tid;

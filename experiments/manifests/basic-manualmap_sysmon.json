@@ -1,0 +1,36 @@
+{
+  "name": "basic-manualmap+sysmon",
+  "description": "Manual mapping (PE injection) observed under both providers. Manual mapping bypasses the PEB loader so KernelProcess never emits ImageLoad for TestDll itself — but the manually-mapped DLL's static imports still trigger normal ImageLoad events for the dependency cascade. Sysmon Event 8 (CreateRemoteThread) fires when the loader stub thread is created in TestTarget. Sysmon Event 7 (ImageLoad) emits for the imported DLLs but should NOT emit for TestDll itself (Sysmon's view of loaded images is also PEB-derived).",
+  "sessionName": "ClientManipulationFramework",
+  "providers": [
+    { "guid": "{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 3
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Debug\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Debug\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Debug\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Debug",
+    "commandLineTemplate": "inject-manualmap --pid {targetPid} --dll C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ClientManipulationFramework\\ProcessToolkit\\x64\\Debug\\TestDll.dll --call RunTest"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "manualmap",
+    "target": "TestTarget.exe",
+    "extra": {
+      "providerSet": "kernel-process+sysmon",
+      "notes": "Expected Sysmon profile: ProcessAccess yes (PROCESS_VM_WRITE), CreateRemoteThread yes (stub thread), but injected_dll_observed still False because PEB-based discovery cannot see the manually-mapped image."
+    }
+  }
+}

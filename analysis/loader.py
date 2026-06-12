@@ -1,12 +1,10 @@
-"""Load experiment runs from disk into normalized pandas DataFrames.
+"""Load experiment runs from disk into pandas DataFrames.
 
 A run is a directory under experiments/runs/<run_id>/ containing:
-  - manifest.json   the resolved orchestration manifest written by Run-Experiment.ps1
-  - telemetry.jsonl one JSON object per line, each with {experiment, event} keys
+  - manifest.json    written by Run-Experiment.ps1
+  - telemetry.jsonl  one JSON object per line: {experiment, event}
 
-The loader produces two DataFrames:
-  - runs:   one row per run (technique, label, attack_start_time, ...)
-  - events: one row per event (run_id, timestamp, task, properties_*)
+load_all() returns (runs_df, events_df).
 """
 
 from __future__ import annotations
@@ -21,13 +19,14 @@ from typing import Iterable
 import pandas as pd
 
 
-# The C++ telemetry writer formats utc_time like "2026-5-26 11:35:38.551" without
-# zero-padding on month/day. Parse it permissively rather than constraining the C++ side.
+# Telemetry's C++ writer formats utc_time without zero-padding on month/day.
 _UTC_TIME_PATTERN = re.compile(
     r"^(?P<y>\d{4})-(?P<mo>\d{1,2})-(?P<d>\d{1,2})\s+"
     r"(?P<h>\d{1,2}):(?P<mi>\d{1,2}):(?P<s>\d{1,2})\.(?P<ms>\d+)$"
 )
 
+
+# ---- Run discovery ----
 
 @dataclass
 class RunPaths:
@@ -42,7 +41,7 @@ class RunPaths:
 
 
 def discover_runs(runs_root: Path) -> list[RunPaths]:
-    """Return every run directory under ``runs_root`` that has a manifest."""
+    # Walk the runs root; a directory counts as a run iff it contains manifest.json.
     out: list[RunPaths] = []
     for entry in sorted(runs_root.iterdir()):
         if not entry.is_dir():
@@ -59,11 +58,13 @@ def discover_runs(runs_root: Path) -> list[RunPaths]:
     return out
 
 
+# ---- Timestamp parsing ----
+
+
 def _parse_utc_time(value: str) -> datetime | None:
     m = _UTC_TIME_PATTERN.match(value.strip()) if value else None
     if m is None:
         return None
-    # Milliseconds may be 1-3 digits depending on the wall-clock value.
     ms_raw = m.group("ms")
     micro = int(ms_raw.ljust(3, "0")[:3]) * 1000
     return datetime(
@@ -85,19 +86,29 @@ def _parse_iso_utc(value: str) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
-def load_run_metadata(run: RunPaths) -> dict:
-    """Read manifest.json and project a flat dict of the fields we care about.
+# ---- Manifest loading ----
 
-    Extend the returned dict to surface new manifest fields. The new key
-    becomes a column on the runs DataFrame and is then available to every
-    feature function via the run_meta Series.
-    """
+def _derive_provider_set(experiment: dict) -> str:
+    """Sorted comma-joined provider-name set, e.g. "KernelProcess,Sysmon"."""
+    providers = experiment.get("providers")
+    if isinstance(providers, list) and providers:
+        names = sorted({(p.get("name") or "").strip() for p in providers if p.get("name")})
+        return ",".join(n for n in names if n)
+    # Legacy single-provider manifests only ever used kernel-process.
+    if experiment.get("providerGuid"):
+        return "KernelProcess"
+    return ""
+
+
+def load_run_metadata(run: RunPaths) -> dict:
+    # Read manifest.json and project the fields we care about into a flat dict.
     raw = json.loads(run.manifest.read_text(encoding="utf-8-sig"))
     experiment = raw.get("experiment") or {}
     metadata = experiment.get("metadata") or {}
     timings = experiment.get("timings") or {}
     execution = raw.get("execution") or {}
 
+    # Wall-clock start + warmup gives us the moment the attack actually fired.
     started_at = _parse_iso_utc(execution.get("startedAt") or "")
     warmup = int(timings.get("warmupSeconds") or 0)
     attack_started_at = started_at + timedelta(seconds=warmup) if started_at else None
@@ -113,11 +124,8 @@ def load_run_metadata(run: RunPaths) -> dict:
         "status": execution.get("status"),
         "target_pid": execution.get("targetPid"),
         "manipulation_pid": execution.get("manipulationPid"),
-        # Exit code of the manipulation tool, as recorded by Run-Experiment.ps1.
-        # Surfaced as its own column so techniques whose ETW signature is empty by
-        # design (e.g. external memory patching) can still be validated as
-        # "tool ran cleanly" vs "tool crashed" — see features.py:compute_run_features.
         "manipulation_exit_code": execution.get("manipulationExitCode"),
+        "provider_set": _derive_provider_set(experiment),
         "started_at": started_at,
         "attack_started_at": attack_started_at,
         "manifest_path": str(run.manifest),
@@ -126,33 +134,51 @@ def load_run_metadata(run: RunPaths) -> dict:
     }
 
 
+# ---- Telemetry JSONL parsing ----
+
 def _iter_jsonl(path: Path) -> Iterable[dict]:
-    with path.open("r", encoding="utf-8-sig") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    # std::wofstream defaults to the system codepage (cp1252 on Windows-en).
+    # Sysmon vendor strings contain bytes like 0xAE (®) that aren't valid UTF-8.
+    # Try UTF-8 first so future UTF-8-clean output works, then fall back.
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        text = path.read_text(encoding="cp1252")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+
+_EVENT_COLUMNS = [
+    "run_id", "timestamp", "provider_name",
+    "task", "opcode", "name", "keywords",
+    "pid", "tid", "image_path",
+    "image_base", "image_size", "image_name",
+    "win32_start_addr", "start_addr", "thread_pid", "thread_id",
+    "source_process_id", "target_process_id",
+    "source_image", "target_image",
+    "granted_access", "rule_name",
+]
 
 
 def load_events(run: RunPaths) -> pd.DataFrame:
-    """Flatten telemetry.jsonl into a DataFrame keyed by run_id + event ordinal.
-
-    To surface a new property field from the ETW collector, add one more entry
-    to the row dict below. Use _parse_hex for hex-string values (ImageBase,
-    addresses) and _maybe_int for decimal integers (TIDs, PIDs).
-    """
+    """One row per event. Defaults provider_name to "KernelProcess" for older
+    runs that predate the multi-provider Telemetry build."""
     rows: list[dict] = []
     for record in _iter_jsonl(run.telemetry):
         event = record.get("event") or {}
         props = event.get("properties") or {}
+        provider_name = (event.get("provider_name") or "").strip() or "KernelProcess"
         rows.append({
-            # Identity + envelope (stable; rarely needs extending)
+            # Envelope: run identity, when, who emitted, what kind of event.
             "run_id": run.run_id,
             "timestamp": _parse_utc_time(event.get("utc_time") or ""),
+            "provider_name": provider_name,
             "task": (event.get("task") or "").strip(),
             "opcode": (event.get("opcode") or "").strip(),
             "name": (event.get("name") or "").strip(),
@@ -160,24 +186,30 @@ def load_events(run: RunPaths) -> pd.DataFrame:
             "pid": event.get("pid"),
             "tid": event.get("tid"),
             "image_path": event.get("image_path") or "",
-            # ----- Property bag (extend here) -----
-            # ImageLoad
+            # KernelProcess ImageLoad properties.
             "image_base": _parse_hex(props.get("ImageBase")),
             "image_size": _parse_hex(props.get("ImageSize")),
             "image_name": props.get("ImageName") or "",
-            # ThreadStart / ThreadStop
+            # KernelProcess Thread{Start,Stop} properties.
             "win32_start_addr": _parse_hex(props.get("Win32StartAddr")),
             "start_addr": _parse_hex(props.get("StartAddr")),
             "thread_pid": _maybe_int(props.get("ProcessID")),
             "thread_id": _maybe_int(props.get("ThreadID")),
+            # Sysmon ProcessAccess / ProcessCreate / CreateRemoteThread properties.
+            # PIDs arrive as strings from TDH-formatted output.
+            "source_process_id": _maybe_int(props.get("SourceProcessId")),
+            "target_process_id": _maybe_int(props.get("TargetProcessId")),
+            "source_image": props.get("SourceImage") or "",
+            "target_image": props.get("TargetImage") or "",
+            "granted_access": _parse_hex(props.get("GrantedAccess")),
+            "rule_name": props.get("RuleName") or "",
         })
     if not rows:
-        return pd.DataFrame(columns=[
-            "run_id", "timestamp", "task", "opcode", "name", "keywords",
-            "pid", "tid", "image_path", "image_base", "image_size", "image_name",
-            "win32_start_addr", "start_addr", "thread_pid", "thread_id",
-        ])
+        return pd.DataFrame(columns=_EVENT_COLUMNS)
     return pd.DataFrame(rows)
+
+
+# ---- Type-tolerant helpers (Sysmon arrives as strings, kernel-process as ints) ----
 
 
 def _parse_hex(value) -> int | None:
@@ -200,8 +232,11 @@ def _maybe_int(value) -> int | None:
         return None
 
 
+# ---- Top-level entry point ----
+
 def load_all(runs_root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load every run under ``runs_root`` and return (runs_df, events_df)."""
+    # Discover, load manifests, then load events. Runs with empty telemetry
+    # still surface in runs_df so completeness / dropped-run counts are honest.
     runs = discover_runs(runs_root)
     meta_rows = [load_run_metadata(r) for r in runs]
     runs_df = pd.DataFrame(meta_rows)
@@ -217,6 +252,7 @@ def load_all(runs_root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
     if event_frames:
         events_df = pd.concat(event_frames, ignore_index=True)
     else:
+        # No events anywhere — use any run's empty schema so column types stay stable.
         events_df = load_events(runs[0]) if runs else pd.DataFrame()
 
     return runs_df, events_df

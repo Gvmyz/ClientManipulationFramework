@@ -16,6 +16,19 @@
 
 #pragma comment(lib, "tdh.lib")
 
+#include <cstdio>
+#include <cstdarg>
+
+static std::wstring g_diag_path;
+static void diag(const wchar_t* fmt, ...) {
+	if (g_diag_path.empty()) return;
+	FILE* f = nullptr;
+	if (_wfopen_s(&f, g_diag_path.c_str(), L"a, ccs=UTF-8") != 0 || !f) return;
+	va_list ap; va_start(ap, fmt); vfwprintf(f, fmt, ap); va_end(ap);
+	fwprintf(f, L"\n"); fclose(f);
+}
+static long g_event_count = 0;
+
 struct ProviderSpec {
 	std::wstring guid_string;    // canonical {XXXXXXXX-XXXX-...} form
 	GUID guid{};
@@ -35,6 +48,7 @@ static const std::map<std::wstring, std::wstring>& known_provider_names() {
 	static const std::map<std::wstring, std::wstring> table = {
 		{ L"{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", L"KernelProcess" },
 		{ L"{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", L"Sysmon" },
+		{ L"{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", L"ThreatIntelligence" },
 	};
 	return table;
 }
@@ -180,10 +194,15 @@ bool is_sysmon_event(const TelemetryEvent& e) {
 	return e.provider_name == L"Sysmon";
 }
 
+bool is_threatint_event(const TelemetryEvent& e) {
+	return e.provider_name == L"ThreatIntelligence";
+}
+
 // Sysmon events are pre-filtered by sysmon-config.xml at the source. Admit
 // all of them; the kernel-process events still go through the type filter.
 bool should_log_event(const TelemetryEvent& event) {
 	if (is_sysmon_event(event)) return true;
+	if (is_threatint_event(event)) return true; 
 	return is_process_start_event(event) || is_thread_event(event) || is_image_event(event);
 }
 
@@ -201,6 +220,11 @@ void print_event(const TelemetryEvent& event) {
 
 void WINAPI OnEvent(PEVENT_RECORD rec) {
 	auto event = build_event(rec);
+	if (++g_event_count <= 50) {
+		diag(L"raw #%ld provider=[%ls] task=[%ls] name=[%ls] opcode=[%ls]",
+			g_event_count, event.provider_name.c_str(), event.task.c_str(),
+			event.name.c_str(), event.opcode.c_str());
+	}
 	if (!should_log_event(event)) return;
 
 	// The PID filter applies to kernel-process events only. For Sysmon events
@@ -323,6 +347,9 @@ int wmain(int argc, wchar_t* argv[]) {
 	}
 	wprintf(L"Arguments parsed...\n");
 
+	g_diag_path = g_config.output_path + L".log";
+	diag(L"=== run start: %zu provider(s) ===", g_config.providers.size());
+
 	auto& logger = JsonLogger::init(g_config.output_path);
 	logger.set_experiment_metadata(g_config.metadata);
 
@@ -361,6 +388,9 @@ int wmain(int argc, wchar_t* argv[]) {
 
 		status = EnableTraceEx2(hTrace, &guid_copy, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
 			TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr);
+
+		diag(L"enable %ls status=%lu", provider.guid_string.c_str(), status);
+
 		if (status != ERROR_SUCCESS) {
 			printf("Failed to enable provider %ls (status %lu)\n",
 				provider.guid_string.c_str(), status);
@@ -387,6 +417,8 @@ int wmain(int argc, wchar_t* argv[]) {
 		printf("Failed to open trace: %u\n", GetLastError());
 		return 1;
 	}
+
+	diag(L"waiting for events...");
 
 	ProcessTrace(&hParse, 1, nullptr, nullptr);
 }

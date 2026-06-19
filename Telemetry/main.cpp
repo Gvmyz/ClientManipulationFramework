@@ -155,6 +155,11 @@ TelemetryEvent build_event(PEVENT_RECORD rec) {
 		status = TdhFormatProperty(info, nullptr, ptr_size, prop.nonStructType.InType,
 			prop.nonStructType.OutType, prop.length, len, data, &text_len, text, &consumed);
 
+		std::wstring v = text;
+		v.erase(std::remove_if(v.begin(), v.end(),
+			[](wchar_t c) { return c == 0x200E || c == 0x200F || (c >= 0x202A && c <= 0x202E); }), v.end());
+		event.properties[prop_name] = v;
+
 		if (status == ERROR_SUCCESS) {
 			event.properties[prop_name] = text;
 
@@ -220,23 +225,14 @@ void print_event(const TelemetryEvent& event) {
 
 void WINAPI OnEvent(PEVENT_RECORD rec) {
 	auto event = build_event(rec);
-	if (++g_event_count <= 50) {
-		diag(L"raw #%ld provider=[%ls] task=[%ls] name=[%ls] opcode=[%ls]",
-			g_event_count, event.provider_name.c_str(), event.task.c_str(),
-			event.name.c_str(), event.opcode.c_str());
-	}
-	if (!should_log_event(event)) return;
-
-	// The PID filter applies to kernel-process events only. For Sysmon events
-	// the cross-process source PID is in the header (e.g. ProcessAccess: header
-	// PID is the *source*, target PID is in the properties), so filtering by
-	// header PID would drop exactly the cross-process events we care about.
-	if (!is_sysmon_event(event) && g_filter.pid && g_filter.pid != event.pid) {
-		return;
-	}
-
-	print_event(event);
-	JsonLogger::instance().write_event(event);
+	const bool keep = should_log_event(event);
+	if (++g_event_count <= 50)
+		diag(L"raw #%ld provider=[%ls] task=[%ls] keep=%d", g_event_count,
+			event.provider_name.c_str(), event.task.c_str(), keep);
+	if (!keep) return;
+	if (!is_sysmon_event(event) && g_filter.pid && g_filter.pid != event.pid) return;
+	const bool wrote = JsonLogger::instance().write_event(event);
+	if (g_event_count <= 50) diag(L"   write -> %d", wrote);
 }
 
 bool parse_meta_argument(const std::wstring_view value, std::wstring& key, std::wstring& data) {
@@ -353,6 +349,8 @@ int wmain(int argc, wchar_t* argv[]) {
 	auto& logger = JsonLogger::init(g_config.output_path);
 	logger.set_experiment_metadata(g_config.metadata);
 
+	diag(L"logger is_open=%d", (int)logger.is_open());
+
 	CONTROLTRACE_ID hTrace{0};
 	std::size_t size = sizeof(EVENT_TRACE_PROPERTIES) + (g_config.session_name.size() + 1) * sizeof(wchar_t);
 	auto buffer = std::make_unique<BYTE[]>(size);
@@ -362,6 +360,10 @@ int wmain(int argc, wchar_t* argv[]) {
 	props->Wnode.BufferSize = static_cast<ULONG>(size);
 	props->LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
 	props->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
+	props->BufferSize = 64;   // KB per buffer
+	props->MinimumBuffers = 8;
+	props->MaximumBuffers = 32;
+	props->FlushTimer = 1;    // deliver at least every 1s -> low latency
 
 	auto status = StartTraceW(&hTrace, g_config.session_name.c_str(), props);
 	if (status == ERROR_ALREADY_EXISTS) {
@@ -371,6 +373,10 @@ int wmain(int argc, wchar_t* argv[]) {
 		props->Wnode.BufferSize = static_cast<ULONG>(size);
 		props->LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
 		props->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
+		props->BufferSize = 64;
+		props->MinimumBuffers = 8;
+		props->MaximumBuffers = 32;
+		props->FlushTimer = 1;
 
 		status = StartTraceW(&hTrace, g_config.session_name.c_str(), props);
 	}
@@ -385,6 +391,12 @@ int wmain(int argc, wchar_t* argv[]) {
 	// the call is harmless.
 	for (const auto& provider : g_config.providers) {
 		GUID guid_copy = provider.guid;
+
+		// ETW-TI gates its cross-process (REMOTE) events behind keywords; MatchAnyKeyword=0
+		// delivers only a subset (the LOCAL self-allocs). Request every keyword category for
+		// TI so the remote alloc/write/inject events are delivered. Other providers keep 0.
+		ULONGLONG match_any = (provider.name == L"ThreatIntelligence")
+			? 0xFFFFFFFFFFFFFFFFULL : 0ULL;
 
 		status = EnableTraceEx2(hTrace, &guid_copy, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
 			TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr);

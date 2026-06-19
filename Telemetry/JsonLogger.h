@@ -64,20 +64,28 @@ public:
 
 	bool write_event(const TelemetryEvent& event) {
 		std::lock_guard<std::mutex> lock(mutex_);
+		if (!file_.is_open()) return false;
 
-		if (!file_.is_open()) {
-			return false;
-		}
+		std::wstring w = build_record(event);
+		int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+		std::string u8(len, '\0');
+		if (len) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), u8.data(), len, nullptr, nullptr);
 
-		file_ << build_record(event) << L'\n';
+		file_ << u8 << '\n';
 		file_.flush();
 		return static_cast<bool>(file_);
+	}
+
+	bool is_open() {
+		std::lock_guard<std::mutex> lock(mutex_);
+		return file_.is_open();
 	}
 
 private:
 	explicit JsonLogger(const std::wstring& file_path)
 		: file_path_(file_path),
-		file_(file_path_, std::ios::out | std::ios::app) {}
+		file_(file_path_.c_str(), std::ios::out | std::ios::app) {
+	}
 
 	~JsonLogger() {
 		std::lock_guard<std::mutex> lock(mutex_);
@@ -228,7 +236,7 @@ private:
 	}
 
 	std::wstring file_path_;
-	std::wofstream file_;
+	std::ofstream file_;
 	ExperimentMetadata metadata_{};
 	std::mutex mutex_;
 };

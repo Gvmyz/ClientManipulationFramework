@@ -1,0 +1,9 @@
+#include <windows.h>
+
+MicrosoftElamCertificateInfo MSElamCertInfoID
+{
+    1,
+    L"21DA57868FD0910C978636164E880EAAC750458B39BEB48DFC55F8AB59AA07A6\0",
+    0x800C,
+    L"\0"
+}

@@ -1,0 +1,43 @@
+;
+; ElamLab.inf
+;
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider=%ManufacturerName%
+DriverVer=
+CatalogFile=ElamLab.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+ElamLab.sys = 1,,
+
+[DefaultInstall.NT$ARCH$]
+CopyFiles = Drivers_Dir
+
+[DefaultInstall.NT$ARCH$.Services]
+AddService = ElamLab,,ElamLab_Service_Inst
+
+[Drivers_Dir]
+ElamLab.sys
+
+[ElamLab_Service_Inst]
+DisplayName    = %ServiceDesc%
+ServiceType    = 1                 ; SERVICE_KERNEL_DRIVER
+StartType      = 0                 ; SERVICE_BOOT_START
+ErrorControl   = 1                 ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\ElamLab.sys
+LoadOrderGroup = "Early-Launch"
+
+[Strings]
+ManufacturerName="<Your manufacturer name>" ;TODO: Replace with your manufacturer name
+DiskName="ElamLab Source Disk"
+ServiceDesc="ElamLab ELAM Driver"

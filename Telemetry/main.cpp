@@ -399,7 +399,7 @@ int wmain(int argc, wchar_t* argv[]) {
 			? 0xFFFFFFFFFFFFFFFFULL : 0ULL;
 
 		status = EnableTraceEx2(hTrace, &guid_copy, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-			TRACE_LEVEL_VERBOSE, 0, 0, 0, nullptr);
+			TRACE_LEVEL_VERBOSE, match_any, 0, 0, nullptr);
 
 		diag(L"enable %ls status=%lu", provider.guid_string.c_str(), status);
 

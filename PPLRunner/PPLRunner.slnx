@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="PPLRunner/PPLRunner.vcxproj" Id="e74eba10-2c86-4ef4-8d9a-042f70b3fd1b" />
+</Solution>

@@ -39,8 +39,51 @@ struct TelemetryConfig {
 	std::vector<ProviderSpec> providers;
 	std::wstring session_name{L"MyTestSession"};
 	std::wstring output_path{L"telemetry.json"};
+	std::vector<DWORD> vm_logging_pids;  // targets to opt into WRITEVM/READVM ETW-TI events
 	ExperimentMetadata metadata{};
 };
+
+// Opts a target process into WRITEVM/READVM ETW-TI events. These two task types
+// are off by default system-wide; the kernel only emits them for processes that
+// a PPL-Antimalware caller has explicitly flagged via NtSetInformationProcess.
+// All other TI task types (ALLOCVM, SETTHREADCONTEXT, MAPVIEW, ...) are always-on.
+static void enable_vm_logging_for_pid(DWORD pid) {
+	constexpr ULONG ProcessEnableReadWriteVmLogging = 87;  // PROCESSINFOCLASS
+	struct ReadWriteVmLoggingInfo {
+		union {
+			UCHAR Flags;
+			struct {
+				UCHAR EnableReadVmLogging  : 1;
+				UCHAR EnableWriteVmLogging : 1;
+				UCHAR Unused               : 6;
+			};
+		};
+	};
+	using NtSetInformationProcessFn = LONG (NTAPI*)(HANDLE, ULONG, PVOID, ULONG);
+
+	HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+	auto pNtSetInformationProcess = reinterpret_cast<NtSetInformationProcessFn>(
+		ntdll ? GetProcAddress(ntdll, "NtSetInformationProcess") : nullptr);
+	if (!pNtSetInformationProcess) {
+		diag(L"vm-logging pid=%lu: NtSetInformationProcess resolve failed", pid);
+		return;
+	}
+
+	HANDLE h = OpenProcess(PROCESS_SET_INFORMATION, FALSE, pid);
+	if (!h) {
+		diag(L"vm-logging pid=%lu: OpenProcess failed gle=%lu", pid, GetLastError());
+		return;
+	}
+
+	ReadWriteVmLoggingInfo info{};
+	info.EnableReadVmLogging  = 1;
+	info.EnableWriteVmLogging = 1;
+	LONG status = pNtSetInformationProcess(h, ProcessEnableReadWriteVmLogging, &info, sizeof(info));
+	CloseHandle(h);
+
+	diag(L"vm-logging pid=%lu status=0x%08lx (0 = STATUS_SUCCESS; C0000022 = ACCESS_DENIED, "
+		L"means consumer is not PPL-Antimalware)", pid, (unsigned long)status);
+}
 
 // Built-in friendly names for the providers we use. Lets a manifest just say
 // `{ "guid": "..." }` and have the name filled in automatically.
@@ -85,8 +128,8 @@ std::map<std::wstring, std::wstring> g_provider_name_by_guid;
 void print_usage(const wchar_t* exe_name) {
 	wprintf(
 		L"Usage: %ls [<ProviderGuid>] [--provider GUID[:Name]] [--pid PID] [--name process.exe] "
-		L"[--output path] [--session name] [--run-id id] [--label label] [--technique name] "
-		L"[--target name] [--meta key=value]\n"
+		L"[--output path] [--session name] [--enable-vm-logging-pid PID] [--run-id id] "
+		L"[--label label] [--technique name] [--target name] [--meta key=value]\n"
 		L"\n"
 		L"At least one provider required. A bare GUID as the first positional arg is treated as\n"
 		L"one provider (legacy form); --provider can be repeated to subscribe to several. Each\n"
@@ -292,6 +335,9 @@ bool parse_arguments(int argc, wchar_t* argv[]) {
 			g_config.output_path = argv[++i];
 		} else if (wcscmp(argv[i], L"--session") == 0 && i + 1 < argc) {
 			g_config.session_name = argv[++i];
+		} else if (wcscmp(argv[i], L"--enable-vm-logging-pid") == 0 && i + 1 < argc) {
+			g_config.vm_logging_pids.push_back(
+				static_cast<DWORD>(std::wcstoul(argv[++i], nullptr, 10)));
 		} else if (wcscmp(argv[i], L"--run-id") == 0 && i + 1 < argc) {
 			g_config.metadata.run_id = argv[++i];
 		} else if (wcscmp(argv[i], L"--label") == 0 && i + 1 < argc) {
@@ -401,7 +447,8 @@ int wmain(int argc, wchar_t* argv[]) {
 		status = EnableTraceEx2(hTrace, &guid_copy, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
 			TRACE_LEVEL_VERBOSE, match_any, 0, 0, nullptr);
 
-		diag(L"enable %ls status=%lu", provider.guid_string.c_str(), status);
+		diag(L"enable %ls status=%lu match_any=0x%llx level=%u",
+			provider.guid_string.c_str(), status, match_any, (unsigned)TRACE_LEVEL_VERBOSE);
 
 		if (status != ERROR_SUCCESS) {
 			printf("Failed to enable provider %ls (status %lu)\n",
@@ -414,6 +461,12 @@ int wmain(int argc, wchar_t* argv[]) {
 
 		const auto label = provider.name.empty() ? provider.guid_string : provider.name;
 		wprintf(L"  enabled provider %ls (%ls)\n", label.c_str(), provider.guid_string.c_str());
+	}
+
+	// Opt requested targets into WRITEVM/READVM telemetry. Must happen before the
+	// injections fire; the toolkit script writes the target PID into runner.cfg.
+	for (DWORD pid : g_config.vm_logging_pids) {
+		enable_vm_logging_for_pid(pid);
 	}
 
 	wprintf(L"Telemetry started. %zu provider(s) enabled. Waiting for events...\n",

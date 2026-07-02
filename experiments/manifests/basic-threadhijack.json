@@ -1,25 +1,27 @@
 {
   "name": "basic-threadhijack",
   "description": "Baseline DLL injection run against the test target using thread execution hijacking (MITRE T1055.003).",
-  "providerGuid": "{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}",
-  "sessionName": "ClientManipulationFramework",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" }
+  ],
+  "sessionName": "TISession",
   "timings": {
     "warmupSeconds": 3,
-    "cooldownSeconds": 3
+    "cooldownSeconds": 5
   },
   "target": {
-    "executable": "ProcessToolkit\\x64\\Debug\\TestTarget.exe",
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
     "arguments": "",
-    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
   },
   "telemetry": {
-    "executable": "ProcessToolkit\\x64\\Debug\\Telemetry.exe",
-    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
   },
   "manipulation": {
-    "executable": "ProcessToolkit\\x64\\Debug\\ProcessToolkit.exe",
-    "workingDirectory": "ProcessToolkit\\x64\\Debug",
-    "commandLineTemplate": "inject-threadhijack --pid {targetPid} --dll C:\\Users\\alexs\\TU_WIEN\\THESIS\\Projects\\ClientManipulationFramework\\ProcessToolkit\\x64\\Debug\\TestDll.dll --call RunTest"
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "inject-threadhijack --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\x64\\Release\\TestDll.dll --call RunTest"
   },
   "metadata": {
     "label": "attack",

@@ -219,9 +219,16 @@ $manipulationProcess = $null
 
 try {
     # ---- 1. Start the target ----
-    $targetProcess = Start-Process -FilePath $resolvedTargetExecutable `
-        -WorkingDirectory $resolvedTargetWorkingDirectory `
-        -ArgumentList ([string]$manifest.target.arguments) -PassThru
+    $targetParams = @{
+        FilePath         = $resolvedTargetExecutable
+        WorkingDirectory = $resolvedTargetWorkingDirectory
+        PassThru         = $true
+    }
+    # Start-Process rejects an empty -ArgumentList; only add it when present.
+    if (-not [string]::IsNullOrWhiteSpace([string]$manifest.target.arguments)) {
+        $targetParams.ArgumentList = [string]$manifest.target.arguments
+    }
+    $targetProcess = Start-Process @targetParams
     $result.execution.targetPid    = $targetProcess.Id
     $result.execution.commands.target = ('{0} {1}' -f (Quote-Argument $resolvedTargetExecutable), [string]$manifest.target.arguments).Trim()
 
@@ -317,9 +324,16 @@ try {
         -Tokens $tokens
     $result.execution.commands.manipulation = ('{0} {1}' -f (Quote-Argument $resolvedManipulationExecutable), $manipulationCommandLine).Trim()
 
-    $manipulationProcess = Start-Process -FilePath $resolvedManipulationExecutable `
-        -WorkingDirectory $resolvedManipulationWorkingDirectory `
-        -ArgumentList $manipulationCommandLine -PassThru -Wait
+    $manipulationParams = @{
+        FilePath         = $resolvedManipulationExecutable
+        WorkingDirectory = $resolvedManipulationWorkingDirectory
+        PassThru         = $true
+        Wait             = $true
+    }
+    if (-not [string]::IsNullOrWhiteSpace($manipulationCommandLine)) {
+        $manipulationParams.ArgumentList = $manipulationCommandLine
+    }
+    $manipulationProcess = Start-Process @manipulationParams
     $result.execution.manipulationPid      = $manipulationProcess.Id
     $result.execution.manipulationExitCode = $manipulationProcess.ExitCode
 

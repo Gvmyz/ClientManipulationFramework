@@ -99,4 +99,4 @@ if (-not $ok) {
 Write-Host '  ELAM certificate info registered' -ForegroundColor Green
 
 Write-Host ''
-Write-Host 'Bootstrap complete — ready for ETW-TI captures.' -ForegroundColor Green
+Write-Host 'Bootstrap complete - ready for ETW-TI captures.' -ForegroundColor Green

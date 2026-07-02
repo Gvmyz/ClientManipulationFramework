@@ -61,7 +61,7 @@ if (-not $svc) {
 
 # Check the PROTECTED bit is set on the service config.
 $protection = (& sc.exe qprotection PPLRunner) -join ' '
-if ($protection -notmatch 'ANTIMALWARE_LIGHT') {
+if ($protection -notmatch 'ANTIMALWARE[ _]LIGHT') {
     Write-Host "  sc qprotection: $protection" -ForegroundColor Yellow
     throw 'PPLRunner is not configured for ANTIMALWARE_LIGHT protection. Re-run PPLRunner.exe --install as admin.'
 }

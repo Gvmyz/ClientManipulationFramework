@@ -1,4 +1,4 @@
-# Bootstrap the ETW-TI capture chain for the current boot session.
+﻿# Bootstrap the ETW-TI capture chain for the current boot session.
 #
 # Test-signing mode does not persist the ELAM certificate registration across
 # reboots, so InstallELAMCertificateInfo must be called every boot before any

@@ -1,4 +1,4 @@
-# Execute one experiment run under the PPL/ETW-TI capture flow.
+﻿# Execute one experiment run under the PPL/ETW-TI capture flow.
 #
 # This is the ELAM/PPL sibling of Run-Experiment.ps1. Instead of launching
 # Telemetry.exe as a normal child process it drives PPLRunner: writes
@@ -207,7 +207,7 @@ if (-not (Get-Service -Name 'PPLRunner' -ErrorAction SilentlyContinue)) {
 }
 $currentSvcStatus = (Get-Service PPLRunner).Status
 if ($currentSvcStatus -ne 'Stopped') {
-    Write-Host "PPLRunner is currently $currentSvcStatus — stopping cleanly before starting fresh capture" -ForegroundColor Yellow
+    Write-Host "PPLRunner is currently $currentSvcStatus - stopping cleanly before starting fresh capture" -ForegroundColor Yellow
     New-Item -ItemType File -Force -Path $pplStopFlag | Out-Null
     if (-not (Wait-ForService -Name 'PPLRunner' -DesiredStatus 'Stopped' -TimeoutSeconds 10)) {
         throw 'PPLRunner did not stop within 10s. Investigate manually before rerunning.'
@@ -335,7 +335,7 @@ try {
     if (Test-Path -LiteralPath $pplTelemetryJson) {
         Copy-Item -LiteralPath $pplTelemetryJson -Destination $telemetryOutputPath -Force
     } else {
-        Write-Warning "No ti_test.json produced — capture is empty."
+        Write-Warning "No ti_test.json produced - capture is empty."
     }
     if (Test-Path -LiteralPath $pplTelemetryLog)    { Copy-Item -LiteralPath $pplTelemetryLog    -Destination $telemetryLogPath -Force }
     if (Test-Path -LiteralPath $pplRunnerLogSource) { Copy-Item -LiteralPath $pplRunnerLogSource -Destination $pplrunnerLogPath -Force }

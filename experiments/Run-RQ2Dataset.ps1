@@ -1,4 +1,4 @@
-# One-shot orchestrator for the RQ2 injection dataset.
+﻿# One-shot orchestrator for the RQ2 injection dataset.
 #
 # Boots the ETW-TI capture chain once, then runs N iterations of each specified
 # manifest under Run-PPLExperiment.ps1. Prints a summary at the end so you can
@@ -39,7 +39,7 @@ $startedAt = Get-Date
 foreach ($m in $Manifests) {
     $manifestPath = Join-Path $manifestsDir "$m.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) {
-        Write-Warning "Manifest not found: $manifestPath — skipping"
+        Write-Warning "Manifest not found: $manifestPath - skipping"
         continue
     }
 

@@ -297,7 +297,11 @@ try {
 
     # Clean prior-run artefacts and write the fresh cfg.
     Remove-Item $pplTelemetryJson, $pplTelemetryLog, $pplRunnerLogSource, $pplStopFlag -ErrorAction SilentlyContinue
-    Set-Content -LiteralPath $RunnerCfgPath -Value $runnerCfgLine -Encoding utf8
+    # Write UTF-8 WITHOUT a BOM: PS 5.1's `-Encoding utf8` emits a BOM, and
+    # PPLRunner feeds runner.cfg's bytes verbatim to CreateProcessW. A leading
+    # BOM lands in front of the exe path, so CreateProcess fails with
+    # ERROR_FILE_NOT_FOUND (2) and Telemetry never launches.
+    [System.IO.File]::WriteAllText($RunnerCfgPath, $runnerCfgLine, (New-Object System.Text.UTF8Encoding($false)))
 
     # ---- 4. Start the protected capture ----
     $scOut = & sc.exe start PPLRunner

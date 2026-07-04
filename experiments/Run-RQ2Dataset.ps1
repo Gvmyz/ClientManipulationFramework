@@ -57,7 +57,7 @@ foreach ($m in $Manifests) {
             & $runScript -ManifestPath $manifestPath
             # The most recently created run dir belonging to this manifest is ours.
             $entry.runDir = (Get-ChildItem $runsDir -Directory |
-                             Where-Object { $_.Name -like "*-$m+ppl" } |
+                             Where-Object { $_.Name -like "*-$m-ppl" } |
                              Sort-Object LastWriteTime -Descending |
                              Select-Object -First 1).FullName
             $entry.status = 'completed'

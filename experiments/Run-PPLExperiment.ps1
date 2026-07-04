@@ -108,7 +108,7 @@ $manifest = Get-Content -LiteralPath $sourceManifestPath -Raw | ConvertFrom-Json
 
 $experimentName = if ($manifest.name) { [string]$manifest.name } else { 'experiment' }
 $timestamp      = Get-Date -Format 'yyyyMMdd_HHmmss'
-$runId          = "$timestamp-$experimentName+ppl"
+$runId          = "$timestamp-$experimentName-ppl"
 $runDirectory   = Join-Path $script:RepoRoot (Join-Path 'experiments\runs' $runId)
 New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 

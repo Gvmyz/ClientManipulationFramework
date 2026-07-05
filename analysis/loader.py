@@ -163,6 +163,9 @@ _EVENT_COLUMNS = [
     "source_process_id", "target_process_id",
     "source_image", "target_image",
     "granted_access", "rule_name",
+    "start_function", "start_module",
+    "calling_process_id", "base_address", "region_size", "vad_region_size",
+    "protection_mask", "allocation_type",
 ]
 
 
@@ -203,6 +206,20 @@ def load_events(run: RunPaths) -> pd.DataFrame:
             "target_image": props.get("TargetImage") or "",
             "granted_access": _parse_hex(props.get("GrantedAccess")),
             "rule_name": props.get("RuleName") or "",
+            # Sysmon CreateRemoteThread properties: StartFunction is the
+            # resolved export name (e.g. "LoadLibraryA") when the start address
+            # lands inside a known module; "-" for orphan / shellcode addresses.
+            "start_function": (props.get("StartFunction") or "").strip(),
+            "start_module": (props.get("StartModule") or "").strip(),
+            # ThreatIntelligence (ETW-TI) cross-process memory operations.
+            # CallingProcessId is the *source* (injector); TargetProcessId the
+            # *victim* (reuses the column above). Both differ from the header pid.
+            "calling_process_id": _maybe_int(props.get("CallingProcessId")),
+            "base_address": _parse_hex(props.get("BaseAddress")),
+            "region_size": _parse_hex(props.get("RegionSize") or props.get("VaVadRegionSize")),
+            "vad_region_size": _parse_hex(props.get("VaVadRegionSize")),
+            "protection_mask": _parse_hex(props.get("ProtectionMask")),
+            "allocation_type": _parse_hex(props.get("AllocationType")),
         })
     if not rows:
         return pd.DataFrame(columns=_EVENT_COLUMNS)

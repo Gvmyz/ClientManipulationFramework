@@ -28,10 +28,38 @@ ACCESS_MASK_HOSTILE = (
     PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD
 )
 
+# Sysmon-8 StartFunction values that indicate a "load a DLL" pattern. Manualmap
+# drives one CreateRemoteThread(LoadLibraryA) per imported DLL, so counting
+# these separates manualmap from loadlibrary (which contributes exactly 1).
+LOADER_START_FUNCTIONS = frozenset({
+    "LoadLibraryA", "LoadLibraryW",
+    "LoadLibraryExA", "LoadLibraryExW",
+})
+
 # x64 user-mode system DLLs live in 0x00007FF8.. and above. Heap and
 # VirtualAlloc-backed pages live well below this. Used to flag dynamic-memory
 # addresses without needing an ImageLoad event for every system DLL.
 SYSTEM_DLL_REGION_LOW = 0x00007FF000000000
+
+# Memory-protection page flags (winnt.h), used by ETW-TI ProtectionMask. We
+# only need the executable bits; any of these means the page can run code.
+PAGE_EXECUTE = 0x10
+PAGE_EXECUTE_READ = 0x20
+PAGE_EXECUTE_READWRITE = 0x40
+PAGE_EXECUTE_WRITECOPY = 0x80
+PAGE_EXECUTABLE_MASK = (
+    PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY
+)
+
+# ETW-TI task names we discriminate on. Names match the provider's
+# manifest exactly so a typo here is a silent miss.
+TI_TASK_ALLOCVM = "KERNEL_THREATINT_TASK_ALLOCVM"
+TI_TASK_WRITEVM = "KERNEL_THREATINT_TASK_WRITEVM"
+TI_TASK_PROTECTVM = "KERNEL_THREATINT_TASK_PROTECTVM"
+TI_TASK_MAPVIEW = "KERNEL_THREATINT_TASK_MAPVIEW"
+TI_TASK_SETTHREADCONTEXT = "KERNEL_THREATINT_TASK_SETTHREADCONTEXT"
+TI_TASK_QUEUEUSERAPC = "KERNEL_THREATINT_TASK_QUEUEUSERAPC"
+TI_TASK_SUSPENDRESUME_THREAD = "KERNEL_THREATINT_TASK_SUSPENDRESUME_THREAD"
 
 
 # ---- Generic helpers ----
@@ -65,9 +93,19 @@ def basename_lower(path: str) -> str:
 
 # ---- KernelProcess detectors ----
 
-def injected_dll_observed(events: pd.DataFrame) -> bool:
-    """True iff TestDll.dll appears as an ImageLoad event."""
+def injected_dll_observed(events: pd.DataFrame, target_pid: int | None = None) -> bool:
+    """True iff TestDll.dll appears as an ImageLoad event *inside the target
+    process*.
+
+    Without the ``target_pid`` filter, this also fires when the injector loads
+    TestDll locally — e.g. ``--call RunTest`` calls LoadLibraryW in
+    ProcessToolkit's own address space to compute the RunTest offset — which
+    makes the detector a false positive for manualmap. Scoping to the target's
+    PID isolates the loader-visible signal to the victim process.
+    """
     image_loads = events[events["task"] == "ImageLoad"]
+    if target_pid is not None:
+        image_loads = image_loads[image_loads["pid"] == target_pid]
     if image_loads.empty:
         return False
     names = image_loads["image_path"].map(basename_lower)
@@ -235,3 +273,295 @@ def sysmon_create_remote_thread_observed(
         return False
     rows = sysmon[sysmon["task"].str.startswith("CreateRemoteThread", na=False)]
     return bool((rows["target_process_id"] == target_pid).any())
+
+
+def sysmon_attacker_hostile_handle_strict(
+    events: pd.DataFrame, target_pid: int | None, attacker_pid: int | None
+) -> bool:
+    """Stricter variant of ``sysmon_attacker_hostile_handle``: requires
+    PROCESS_CREATE_THREAD (0x0002) specifically.
+
+    Ambient Windows services (svchost, MsMpEng) commonly hold handles with
+    VM_WRITE and VM_OPERATION but never CREATE_THREAD. That single bit is the
+    sharpest discriminator of injection intent from benign cross-process
+    traffic in the current data.
+    """
+    if attacker_pid is None:
+        return False
+    rows = _sysmon_process_access_events(events, target_pid)
+    if rows.empty:
+        return False
+    candidates = rows[
+        (rows["source_process_id"] == attacker_pid)
+        & rows["granted_access"].notna()
+    ]
+    if candidates.empty:
+        return False
+    return bool(
+        candidates["granted_access"]
+        .apply(lambda m: bool(int(m) & PROCESS_CREATE_THREAD))
+        .any()
+    )
+
+
+def sysmon_create_remote_thread_load_library_count(
+    events: pd.DataFrame, target_pid: int | None
+) -> int:
+    """Count of Sysmon-8 events targeting TestTarget whose StartFunction is a
+    LoadLibrary* export.
+
+    Manualmap drives one such thread per imported DLL of the mapped image
+    (typically 3-5). Loadlibrary contributes exactly 1 (the injection thread
+    itself). Threadhijack contributes 0. This count is a strong discriminator
+    for manualmap even when its ImageLoad signal is absent.
+    """
+    if target_pid is None:
+        return 0
+    sysmon = events[events["provider_name"] == "Sysmon"]
+    if sysmon.empty:
+        return 0
+    rows = sysmon[
+        sysmon["task"].str.startswith("CreateRemoteThread", na=False)
+        & (sysmon["target_process_id"] == target_pid)
+        & sysmon["start_function"].isin(LOADER_START_FUNCTIONS)
+    ]
+    return int(len(rows))
+
+
+def sysmon_create_remote_thread_orphan_count(
+    events: pd.DataFrame, target_pid: int | None
+) -> int:
+    """Count of Sysmon-8 events targeting TestTarget whose StartFunction is "-"
+    (unresolved to any module export).
+
+    An unresolved start address means the target thread runs in memory that
+    Sysmon cannot name — dynamically allocated shellcode or a manually-mapped
+    image. Combined with an orphan KernelProcess ThreadStart at the same
+    address, this is the loader-bypass signature.
+    """
+    if target_pid is None:
+        return 0
+    sysmon = events[events["provider_name"] == "Sysmon"]
+    if sysmon.empty:
+        return 0
+    rows = sysmon[
+        sysmon["task"].str.startswith("CreateRemoteThread", na=False)
+        & (sysmon["target_process_id"] == target_pid)
+        & (sysmon["start_function"] == "-")
+    ]
+    return int(len(rows))
+
+
+# ---- ThreatIntelligence (ETW-TI) detectors ----
+# Cross-process telemetry from the kernel: the actual NtAllocate/Write/Protect/
+# SetContext syscalls behind the Win32 injection primitives. Each detector
+# requires the run's TestTarget PID; cross-process means CallingProcessId
+# (the injector) differs from TargetProcessId (the victim). Returns False/0
+# when TI was not subscribed for this run.
+
+
+def _ti_targeted_events(
+    events: pd.DataFrame, target_pid: int | None
+) -> pd.DataFrame:
+    """ThreatIntelligence events that *targeted* the run's TestTarget. Drops
+    self-operations (CallingProcessId == TargetProcessId), which are ambient
+    same-process allocations not attributable to an injection."""
+    if target_pid is None:
+        return events.iloc[0:0]
+    ti = events[events["provider_name"] == "ThreatIntelligence"]
+    if ti.empty:
+        return ti
+    targeted = ti[ti["target_process_id"] == target_pid]
+    return targeted[targeted["calling_process_id"] != targeted["target_process_id"]]
+
+
+def threatint_cross_process_observed(
+    events: pd.DataFrame, target_pid: int | None
+) -> bool:
+    """Any cross-process TI operation against the target. Coarse umbrella signal:
+    if this is True the technique is *visible* to ETW-TI at all."""
+    return not _ti_targeted_events(events, target_pid).empty
+
+
+def threatint_cross_process_count(
+    events: pd.DataFrame, target_pid: int | None
+) -> int:
+    return int(len(_ti_targeted_events(events, target_pid)))
+
+
+def _ti_task_observed(
+    events: pd.DataFrame, target_pid: int | None, task_name: str
+) -> bool:
+    targeted = _ti_targeted_events(events, target_pid)
+    if targeted.empty:
+        return False
+    return bool((targeted["task"] == task_name).any())
+
+
+def threatint_remote_alloc_observed(
+    events: pd.DataFrame, target_pid: int | None
+) -> bool:
+    """NtAllocateVirtualMemory into the target. Manual-map / shellcode injection
+    light this up; LoadLibrary injection does not (it allocates only in the
+    injector for the DLL-path string)."""
+    return _ti_task_observed(events, target_pid, TI_TASK_ALLOCVM)
+
+
+def threatint_remote_executable_alloc_observed(
+    events: pd.DataFrame, target_pid: int | None
+) -> bool:
+    """Remote alloc with an executable page protection (PAGE_EXECUTE_*). The
+    canonical "remote RWX" injection signal — far stronger than a plain
+    remote alloc, which can be a read-write scratch buffer."""
+    targeted = _ti_targeted_events(events, target_pid)
+    if targeted.empty:
+        return False
+    allocs = targeted[targeted["task"] == TI_TASK_ALLOCVM]
+    if allocs.empty:
+        return False
+    return bool(
+        allocs["protection_mask"]
+        .dropna()
+        .map(lambda m: bool(int(m) & PAGE_EXECUTABLE_MASK))
+        .any()
+    )
+
+
+def threatint_remote_write_observed(
+    events: pd.DataFrame, target_pid: int | None
+) -> bool:
+    """NtWriteVirtualMemory into the target (code/data planted by the injector)."""
+    return _ti_task_observed(events, target_pid, TI_TASK_WRITEVM)
+
+
+def threatint_remote_protect_observed(
+    events: pd.DataFrame, target_pid: int | None
+) -> bool:
+    """NtProtectVirtualMemory against the target — the RW→RX flip used by
+    stagers and the protection change behind in-process patches."""
+    return _ti_task_observed(events, target_pid, TI_TASK_PROTECTVM)
+
+
+def threatint_thread_hijack_observed(
+    events: pd.DataFrame, target_pid: int | None
+) -> bool:
+    """NtSetContextThread against a thread in the target. Inherently
+    cross-process and the single highest-confidence injection signal — almost
+    no benign software does this."""
+    return _ti_task_observed(events, target_pid, TI_TASK_SETTHREADCONTEXT)
+
+
+# ---- ThreatIntelligence (ETW-TI) detectors ----
+# All no-ops on runs that did not subscribe to the ThreatIntelligence provider.
+# TI attributes the *source* of a cross-process operation to CallingProcessId and
+# the *victim* to TargetProcessId (both distinct from the event header pid). A
+# genuine injection signal is a TI event where calling != target and target is the
+# run's TestTarget. Self-operations (calling == target, e.g. a process allocating
+# RWX in itself) are ambient noise and are deliberately excluded.
+
+TI_PROVIDER = "ThreatIntelligence"
+
+# Memory-protection bits (winnt.h) that grant execute. PAGE_EXECUTE 0x10,
+# _READ 0x20, _READWRITE 0x40, _WRITECOPY 0x80.
+PAGE_EXECUTE_ANY = 0x10 | 0x20 | 0x40 | 0x80
+
+
+def _threatint_events(events: pd.DataFrame) -> pd.DataFrame:
+    if "provider_name" not in events.columns or events.empty:
+        return events.iloc[0:0]
+    return events[events["provider_name"] == TI_PROVIDER]
+
+
+def _threatint_cross_process(
+    events: pd.DataFrame, target_pid: int | None
+) -> pd.DataFrame:
+    """TI events crossing a process boundary into the run's target:
+    calling != target and target == target_pid."""
+    if target_pid is None:
+        return events.iloc[0:0]
+    ti = _threatint_events(events)
+    if ti.empty:
+        return ti
+    return ti[
+        ti["target_process_id"].notna()
+        & ti["calling_process_id"].notna()
+        & (ti["target_process_id"] == target_pid)
+        & (ti["calling_process_id"] != ti["target_process_id"])
+    ]
+
+
+def _ti_task(events: pd.DataFrame, target_pid: int | None, needle: str) -> pd.DataFrame:
+    cross = _threatint_cross_process(events, target_pid)
+    if cross.empty:
+        return cross
+    return cross[cross["task"].str.contains(needle, case=False, na=False)]
+
+
+def threatint_cross_process_observed(events: pd.DataFrame, target_pid: int | None) -> bool:
+    """Any cross-process TI operation against the target (broadest TI signal)."""
+    return not _threatint_cross_process(events, target_pid).empty
+
+
+def threatint_cross_process_count(events: pd.DataFrame, target_pid: int | None) -> int:
+    return int(len(_threatint_cross_process(events, target_pid)))
+
+
+def threatint_cross_process_write_count(
+    events: pd.DataFrame, target_pid: int | None
+) -> int:
+    """Cross-process WRITEVM events targeting TestTarget. Attributed to the
+    injection primitive itself; excludes ambient READVM_REMOTE which dominates
+    the raw ``threatint_cross_process_count``."""
+    cross = _threatint_cross_process(events, target_pid)
+    if cross.empty:
+        return 0
+    return int(cross["task"].str.contains("WRITEVM", case=False, na=False).sum())
+
+
+def threatint_cross_process_alloc_count(
+    events: pd.DataFrame, target_pid: int | None
+) -> int:
+    """Cross-process ALLOCVM events targeting TestTarget. Only fires for
+    executable-protection allocs — a Windows kernel design decision that
+    partially hides RW-only injectors (e.g. classic LoadLibraryW via a
+    non-executable path buffer)."""
+    cross = _threatint_cross_process(events, target_pid)
+    if cross.empty:
+        return 0
+    return int(cross["task"].str.contains("ALLOCVM", case=False, na=False).sum())
+
+
+def threatint_remote_alloc_observed(events: pd.DataFrame, target_pid: int | None) -> bool:
+    """Remote VirtualAllocEx into the target (KERNEL_THREATINT_TASK_ALLOCVM)."""
+    return not _ti_task(events, target_pid, "ALLOCVM").empty
+
+
+def threatint_remote_executable_alloc_observed(
+    events: pd.DataFrame, target_pid: int | None
+) -> bool:
+    """Remote allocation of *executable* memory in the target — the strongest
+    classic injection signal (RWX/RX shellcode region)."""
+    rows = _ti_task(events, target_pid, "ALLOCVM")
+    if rows.empty or "protection_mask" not in rows.columns:
+        return False
+    masks = rows["protection_mask"].dropna()
+    if masks.empty:
+        return False
+    return bool(masks.apply(lambda m: bool(int(m) & PAGE_EXECUTE_ANY)).any())
+
+
+def threatint_remote_write_observed(events: pd.DataFrame, target_pid: int | None) -> bool:
+    """Remote WriteProcessMemory into the target (WRITEVM)."""
+    return not _ti_task(events, target_pid, "WRITEVM").empty
+
+
+def threatint_remote_protect_observed(events: pd.DataFrame, target_pid: int | None) -> bool:
+    """Remote VirtualProtect on the target (PROTECTVM) — the RX flip used by
+    memory patching and by arming a written shellcode region."""
+    return not _ti_task(events, target_pid, "PROTECTVM").empty
+
+
+def threatint_thread_hijack_observed(events: pd.DataFrame, target_pid: int | None) -> bool:
+    """SetThreadContext against a thread in the target (SETTHREADCONTEXT) —
+    the defining primitive of thread-hijack injection."""
+    return not _ti_task(events, target_pid, "SETTHREADCONTEXT").empty

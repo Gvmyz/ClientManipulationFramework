@@ -173,8 +173,14 @@ namespace PT::DllInjection {
 			);
 		}
 
-		// Allocate the image in the target.
-		void* remote_base = PT::ProcessMemory::remote_alloc(process, image_size, PAGE_EXECUTE_READWRITE);
+		// Allocate the image in the target as PAGE_READWRITE (writable, not
+		// executable). Per-section VirtualProtectEx is applied after writing,
+		// matching how production reflective loaders (MemoryModule, Metasploit,
+		// etc.) set up an image — .text ends up PAGE_EXECUTE_READ, data
+		// sections stay PAGE_READWRITE / PAGE_READONLY, and no page is left
+		// PAGE_EXECUTE_READWRITE. This surfaces PROTECTVM_REMOTE events and
+		// avoids the RWX-region red flag that generic EDRs key on.
+		void* remote_base = PT::ProcessMemory::remote_alloc(process, image_size, PAGE_READWRITE);
 		if (!remote_base) return std::nullopt;
 		const auto remote_addr = reinterpret_cast<std::uintptr_t>(remote_base);
 
@@ -259,6 +265,40 @@ namespace PT::DllInjection {
 			return std::nullopt;
 		}
 
+		// Apply per-section protections. The image is currently PAGE_READWRITE
+		// end-to-end; walk sections and set each to what its Characteristics
+		// bits require. Emits one PROTECTVM_REMOTE event per protect call.
+		auto section_protection = [](DWORD characteristics) -> DWORD {
+			const bool ex = (characteristics & IMAGE_SCN_MEM_EXECUTE) != 0;
+			const bool wr = (characteristics & IMAGE_SCN_MEM_WRITE)   != 0;
+			if (ex && wr) return PAGE_EXECUTE_READWRITE;   // unusual but legal
+			if (ex)       return PAGE_EXECUTE_READ;        // .text
+			if (wr)       return PAGE_READWRITE;           // .data
+			return PAGE_READONLY;                          // .rdata
+		};
+
+		// Headers page → PAGE_READONLY. Nothing needs to write to it after this.
+		{
+			DWORD old_protect = 0;
+			if (!VirtualProtectEx(process.get(), remote_base, headers_size, PAGE_READONLY, &old_protect)) {
+				PT::ProcessMemory::remote_free(process, remote_base);
+				return std::nullopt;
+			}
+		}
+		for (WORD i = 0; i < nt_hdrs->FileHeader.NumberOfSections; ++i) {
+			const auto& sec = sections[i];
+			const DWORD sec_size = sec.Misc.VirtualSize ? sec.Misc.VirtualSize : sec.SizeOfRawData;
+			if (sec_size == 0) continue;
+
+			void* sec_addr = reinterpret_cast<void*>(remote_addr + sec.VirtualAddress);
+			DWORD old_protect = 0;
+			if (!VirtualProtectEx(process.get(), sec_addr, sec_size,
+									section_protection(sec.Characteristics), &old_protect)) {
+				PT::ProcessMemory::remote_free(process, remote_base);
+				return std::nullopt;
+			}
+		}
+
 		// Force the target to load each imported DLL. The IAT slots we wrote point
 		// at the injector's resolved addresses; those VAs are only valid in the
 		// target if the same DLL is actually mapped there. Drive a remote
@@ -306,9 +346,12 @@ namespace PT::DllInjection {
 		constexpr std::size_t stub_size = sizeof(k_loader_stub);
 		constexpr std::size_t params_size = sizeof(LoaderParams);
 
-		// TODO: apply per-section protections (currently RWX for the whole image).
+		// Loader stub: allocate PAGE_READWRITE, write stub+params, then flip to
+		// PAGE_EXECUTE_READ. Stub is code, params are read-only inputs; both
+		// fit in one page so a single VirtualProtectEx flip covers them. This
+		// emits one more PROTECTVM_REMOTE event for the stub region.
 		void* remote_stub = PT::ProcessMemory::remote_alloc(
-			process, stub_size + params_size, PAGE_EXECUTE_READWRITE);
+			process, stub_size + params_size, PAGE_READWRITE);
 		if (!remote_stub) {
 			PT::ProcessMemory::remote_free(process, remote_base);
 			return std::nullopt;
@@ -325,6 +368,16 @@ namespace PT::DllInjection {
 			PT::ProcessMemory::remote_free(process, remote_stub);
 			PT::ProcessMemory::remote_free(process, remote_base);
 			return std::nullopt;
+		}
+
+		{
+			DWORD stub_old_protect = 0;
+			if (!VirtualProtectEx(process.get(), remote_stub, stub_size + params_size,
+									PAGE_EXECUTE_READ, &stub_old_protect)) {
+				PT::ProcessMemory::remote_free(process, remote_stub);
+				PT::ProcessMemory::remote_free(process, remote_base);
+				return std::nullopt;
+			}
 		}
 
 		auto thread = PT::ProcessThread::create_remote_thread(

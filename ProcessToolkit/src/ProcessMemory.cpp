@@ -7,6 +7,13 @@ namespace PT::ProcessMemory {
 		return WinHandle(handle);
 	}
 
+	WinHandle open_process_memory_only(DWORD pid, bool need_read) {
+		DWORD desired = PROCESS_VM_OPERATION | PROCESS_VM_WRITE;
+		if (need_read) desired |= PROCESS_VM_READ;
+		HANDLE handle = OpenProcess(desired, FALSE, pid);
+		return WinHandle(handle);
+	}
+
 	void* remote_alloc(const WinHandle& process, SIZE_T size, DWORD protection) {
 		if (!process || size == 0) return nullptr;
 		return VirtualAllocEx(process.get(), nullptr, size, MEM_COMMIT | MEM_RESERVE, protection);

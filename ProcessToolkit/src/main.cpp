@@ -360,7 +360,8 @@ namespace {
 		}
 
 		PT::Cli::print_section("Open Target Process");
-		auto process = PT::ProcessMemory::open_process(*options.pid);
+
+		auto process = PT::ProcessMemory::open_process_memory_only(*options.pid, options.verify);
 		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
 			return 1;
 		}

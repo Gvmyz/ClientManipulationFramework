@@ -1,24 +1,28 @@
 {
   "name": "basic-patch-data",
   "description": "External memory patching: change TestTarget's stack-local `value` variable from 600 to 9999 using WriteProcessMemory from a separate process. No code injection, no new thread or DLL inside the target. The expected outcome with the current ETW provider list is an empty trace — the kernel-process provider does not surface cross-process memory writes. That absence is itself the finding.",
-  "providerGuid": "{22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716}",
-  "sessionName": "ClientManipulationFramework",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
   "timings": {
     "warmupSeconds": 3,
     "cooldownSeconds": 3
   },
   "target": {
-    "executable": "ProcessToolkit\\x64\\Debug\\TestTarget.exe",
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
     "arguments": "",
-    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
   },
   "telemetry": {
-    "executable": "ProcessToolkit\\x64\\Debug\\Telemetry.exe",
-    "workingDirectory": "ProcessToolkit\\x64\\Debug"
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
   },
   "manipulation": {
-    "executable": "ProcessToolkit\\x64\\Debug\\ProcessToolkit.exe",
-    "workingDirectory": "ProcessToolkit\\x64\\Debug",
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
     "commandLineTemplate": "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000 --verify"
   },
   "metadata": {

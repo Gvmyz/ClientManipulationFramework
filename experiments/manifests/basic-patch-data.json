@@ -23,7 +23,7 @@
   "manipulation": {
     "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
     "workingDirectory": "ProcessToolkit\\x64\\Release",
-    "commandLineTemplate": "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000"
+    "commandLineTemplate": "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000 --verify"
   },
   "metadata": {
     "label": "attack",

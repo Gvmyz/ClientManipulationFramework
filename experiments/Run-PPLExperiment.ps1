@@ -132,10 +132,22 @@ if (-not $resolvedTargetWorkingDirectory) {
     $resolvedTargetWorkingDirectory = Split-Path -Parent $resolvedTargetExecutable
 }
 
-$resolvedManipulationExecutable       = Resolve-OptionalPath $manifest.manipulation.executable
-$resolvedManipulationWorkingDirectory = Resolve-OptionalPath $manifest.manipulation.workingDirectory
-if (-not $resolvedManipulationWorkingDirectory) {
-    $resolvedManipulationWorkingDirectory = Split-Path -Parent $resolvedManipulationExecutable
+# If the manifest omits the manipulation section, we assume an EXTERNAL attacker
+# is going to drive the injection (e.g. an interactive Metasploit migrate). In
+# that mode we still do target + telemetry setup, but instead of Start-Process'ing
+# our own attacker we display the target PID and wait for the operator to press
+# Enter when they're done. Enables tier-1 red-team-tool validation.
+$externalManipulation = -not ($manifest.PSObject.Properties['manipulation'] -and $manifest.manipulation)
+
+if (-not $externalManipulation) {
+    $resolvedManipulationExecutable       = Resolve-OptionalPath $manifest.manipulation.executable
+    $resolvedManipulationWorkingDirectory = Resolve-OptionalPath $manifest.manipulation.workingDirectory
+    if (-not $resolvedManipulationWorkingDirectory) {
+        $resolvedManipulationWorkingDirectory = Split-Path -Parent $resolvedManipulationExecutable
+    }
+} else {
+    $resolvedManipulationExecutable       = $null
+    $resolvedManipulationWorkingDirectory = $null
 }
 
 # ---- Build the manifest skeleton (matches Run-Experiment.ps1 schema) ----
@@ -159,7 +171,8 @@ $result = [ordered]@{
         manipulation  = [ordered]@{
             executable          = $resolvedManipulationExecutable
             workingDirectory    = $resolvedManipulationWorkingDirectory
-            commandLineTemplate = [string]$manifest.manipulation.commandLineTemplate
+            commandLineTemplate = if ($externalManipulation) { '<external>' } else { [string]$manifest.manipulation.commandLineTemplate }
+            external            = $externalManipulation
         }
     }
     output             = [ordered]@{
@@ -323,23 +336,43 @@ try {
     Start-Sleep -Seconds ([int]$manifest.timings.warmupSeconds)
 
     # ---- 6. Run the manipulation ----
-    $manipulationCommandLine = Resolve-Template `
-        -Template ([string]$manifest.manipulation.commandLineTemplate) `
-        -Tokens $tokens
-    $result.execution.commands.manipulation = ('{0} {1}' -f (Quote-Argument $resolvedManipulationExecutable), $manipulationCommandLine).Trim()
+    if ($externalManipulation) {
+        # External-attacker mode: display the target PID and wait for the
+        # operator to drive the injection out-of-band (Metasploit, Sliver, etc.)
+        # and press Enter.
+        Write-Host ''
+        Write-Host '================================================================' -ForegroundColor Cyan
+        Write-Host ('  EXTERNAL ATTACKER MODE') -ForegroundColor Yellow
+        Write-Host ('  Target PID: {0}' -f $targetProcess.Id) -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host '  Now drive the injection externally (e.g. in msfconsole run:'
+        Write-Host ('     migrate {0}' -f $targetProcess.Id) -ForegroundColor Green
+        Write-Host '  When the migration/injection has completed, come back HERE'
+        Write-Host '  and press Enter to trigger cooldown + capture teardown.'
+        Write-Host '================================================================' -ForegroundColor Cyan
+        Write-Host ''
+        [void](Read-Host 'Press Enter to continue (Ctrl+C to abort)')
+        $result.execution.commands.manipulation = '<external attacker>'
+        $result.execution.manipulationExitCode  = 0
+    } else {
+        $manipulationCommandLine = Resolve-Template `
+            -Template ([string]$manifest.manipulation.commandLineTemplate) `
+            -Tokens $tokens
+        $result.execution.commands.manipulation = ('{0} {1}' -f (Quote-Argument $resolvedManipulationExecutable), $manipulationCommandLine).Trim()
 
-    $manipulationParams = @{
-        FilePath         = $resolvedManipulationExecutable
-        WorkingDirectory = $resolvedManipulationWorkingDirectory
-        PassThru         = $true
-        Wait             = $true
+        $manipulationParams = @{
+            FilePath         = $resolvedManipulationExecutable
+            WorkingDirectory = $resolvedManipulationWorkingDirectory
+            PassThru         = $true
+            Wait             = $true
+        }
+        if (-not [string]::IsNullOrWhiteSpace($manipulationCommandLine)) {
+            $manipulationParams.ArgumentList = $manipulationCommandLine
+        }
+        $manipulationProcess = Start-Process @manipulationParams
+        $result.execution.manipulationPid      = $manipulationProcess.Id
+        $result.execution.manipulationExitCode = $manipulationProcess.ExitCode
     }
-    if (-not [string]::IsNullOrWhiteSpace($manipulationCommandLine)) {
-        $manipulationParams.ArgumentList = $manipulationCommandLine
-    }
-    $manipulationProcess = Start-Process @manipulationParams
-    $result.execution.manipulationPid      = $manipulationProcess.Id
-    $result.execution.manipulationExitCode = $manipulationProcess.ExitCode
 
     # ---- 7. Cooldown so ETW flushes, then request graceful shutdown ----
     Start-Sleep -Seconds $result.execution.cooldownSeconds

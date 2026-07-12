@@ -118,8 +118,10 @@ foreach ($g in $byStatus) {
 Write-Host ''
 Write-Host '=== Per-manifest breakdown ===' -ForegroundColor Cyan
 $campaign | Group-Object manifest | Sort-Object Name | ForEach-Object {
-    $ok   = ($_.Group | Where-Object status -eq 'completed').Count
-    $fail = ($_.Group | Where-Object status -eq 'failed').Count
+    # @(...) forces array context. Without it, an empty Where-Object result is
+    # $null, and $null.Count fails under Set-StrictMode -Version Latest.
+    $ok   = @($_.Group | Where-Object { $_.status -eq 'completed' }).Count
+    $fail = @($_.Group | Where-Object { $_.status -eq 'failed' }).Count
     Write-Host ('  {0,-22} completed: {1,3}   failed: {2}' -f $_.Name, $ok, $fail)
 }
 

@@ -1,0 +1,34 @@
+{
+  "name": "meterpreter-migrate",
+  "description": "Tier-1 external-attacker validation. Meterpreter (Metasploit) migrates its session into TestTarget.exe. Framework provides target + telemetry; the operator drives the migrate from msfconsole while Run-PPLExperiment waits at an interactive prompt.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 8
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "meterpreter-migrate",
+    "target": "TestTarget.exe",
+    "extra": {
+      "notes": "External attacker: Metasploit windows/x64/meterpreter/reverse_tcp session, migrate <targetPid>. Reflective DLL injection: OpenProcess -> VirtualAllocEx -> WriteProcessMemory (payload + reflective loader) -> CreateRemoteThread.",
+      "attacker": "metasploit",
+      "delivery": "co-located",
+      "tier": "1"
+    }
+  }
+}

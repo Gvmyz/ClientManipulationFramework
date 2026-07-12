@@ -1,0 +1,92 @@
+﻿{
+    "schemaVersion":  1,
+    "sourceManifestPath":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\manifests\\baseline.json",
+    "runId":  "20260709_080415-baseline-ppl",
+    "experiment":  {
+                       "name":  "baseline",
+                       "description":  "Benign trace of the test target running without any manipulation. The ping no-op holds the observation window open long enough for the ETW session to capture steady-state activity; the cooldown gives the telemetry process time to flush its write buffer before being stopped.",
+                       "providers":  [
+                                         {
+                                             "guid":  "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+                                             "name":  "ThreatIntelligence"
+                                         },
+                                         {
+                                             "guid":  "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+                                             "name":  "KernelProcess"
+                                         },
+                                         {
+                                             "guid":  "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+                                             "name":  "Sysmon"
+                                         }
+                                     ],
+                       "sessionName":  "TISession",
+                       "timings":  {
+                                       "warmupSeconds":  5,
+                                       "cooldownSeconds":  5
+                                   },
+                       "target":  {
+                                      "executable":  "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                      "arguments":  "",
+                                      "workingDirectory":  "ProcessToolkit\\x64\\Release"
+                                  },
+                       "telemetry":  {
+                                         "executable":  "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+                                         "workingDirectory":  "ProcessToolkit\\x64\\Release"
+                                     },
+                       "manipulation":  {
+                                            "executable":  "C:\\Windows\\System32\\ping.exe",
+                                            "workingDirectory":  "C:\\Windows\\System32",
+                                            "commandLineTemplate":  "-n 6 127.0.0.1"
+                                        },
+                       "metadata":  {
+                                        "label":  "baseline",
+                                        "technique":  "none",
+                                        "target":  "TestTarget.exe",
+                                        "extra":  {
+                                                      "notes":  "No DLL injection. ping -n 6 127.0.0.1 is a no-op that keeps the process alive for ~5 seconds. The 5-second cooldown ensures the telemetry process flushes its buffer before Stop-Process kills it."
+                                                  }
+                                    }
+                   },
+    "resolved":  {
+                     "target":  {
+                                    "executable":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                    "workingDirectory":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release",
+                                    "arguments":  ""
+                                },
+                     "telemetry":  {
+                                       "executable":  "C:\\elam\\bin\\Telemetry.exe",
+                                       "workingDirectory":  "C:\\elam"
+                                   },
+                     "manipulation":  {
+                                          "executable":  "C:\\Windows\\System32\\ping.exe",
+                                          "workingDirectory":  "C:\\Windows\\System32",
+                                          "commandLineTemplate":  "-n 6 127.0.0.1"
+                                      }
+                 },
+    "output":  {
+                   "directory":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260709_080415-baseline-ppl",
+                   "telemetry":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260709_080415-baseline-ppl\\telemetry.jsonl",
+                   "manifest":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260709_080415-baseline-ppl\\manifest.json"
+               },
+    "execution":  {
+                      "startedAt":  "2026-07-09T08:04:15.9862949+01:00",
+                      "warmupSeconds":  5,
+                      "cooldownSeconds":  5,
+                      "mode":  "ppl",
+                      "sessionName":  "TISession",
+                      "vmLoggingPid":  14224,
+                      "commands":  {
+                                       "target":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                       "telemetry":  "C:\\elam\\bin\\Telemetry.exe --provider {F4E1897C-BB5D-5668-F1D8-040F4D8DD344}:ThreatIntelligence --provider {22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}:KernelProcess --provider {5770385F-C22A-43E0-BF4C-06F5698FFBD9}:Sysmon --output C:\\elam\\ti_test.json --session TISession --enable-vm-logging-pid 14224 --run-id 20260709_080415-baseline-ppl --label baseline --technique none --target TestTarget.exe --meta \"notes=No DLL injection. ping -n 6 127.0.0.1 is a no-op that keeps the process alive for ~5 seconds. The 5-second cooldown ensures the telemetry process flushes its buffer before Stop-Process kills it.\"",
+                                       "manipulation":  "C:\\Windows\\System32\\ping.exe -n 6 127.0.0.1"
+                                   },
+                      "targetPid":  14224,
+                      "pplrunnerPid":  null,
+                      "telemetryPid":  13904,
+                      "manipulationPid":  14656,
+                      "targetExitCode":  -1,
+                      "manipulationExitCode":  0,
+                      "status":  "completed",
+                      "finishedAt":  "2026-07-09T08:04:33.6163071+01:00"
+                  }
+}

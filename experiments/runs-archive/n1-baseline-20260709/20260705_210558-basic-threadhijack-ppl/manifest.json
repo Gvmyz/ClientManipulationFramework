@@ -1,0 +1,92 @@
+﻿{
+    "schemaVersion":  1,
+    "sourceManifestPath":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\manifests\\basic-threadhijack.json",
+    "runId":  "20260705_210558-basic-threadhijack-ppl",
+    "experiment":  {
+                       "name":  "basic-threadhijack",
+                       "description":  "Baseline DLL injection run against the test target using thread execution hijacking (MITRE T1055.003).",
+                       "providers":  [
+                                         {
+                                             "guid":  "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+                                             "name":  "ThreatIntelligence"
+                                         },
+                                         {
+                                             "guid":  "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+                                             "name":  "KernelProcess"
+                                         },
+                                         {
+                                             "guid":  "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+                                             "name":  "Sysmon"
+                                         }
+                                     ],
+                       "sessionName":  "TISession",
+                       "timings":  {
+                                       "warmupSeconds":  3,
+                                       "cooldownSeconds":  5
+                                   },
+                       "target":  {
+                                      "executable":  "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                      "arguments":  "",
+                                      "workingDirectory":  "ProcessToolkit\\x64\\Release"
+                                  },
+                       "telemetry":  {
+                                         "executable":  "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+                                         "workingDirectory":  "ProcessToolkit\\x64\\Release"
+                                     },
+                       "manipulation":  {
+                                            "executable":  "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+                                            "workingDirectory":  "ProcessToolkit\\x64\\Release",
+                                            "commandLineTemplate":  "inject-threadhijack --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\x64\\Release\\TestDll.dll --call RunTest"
+                                        },
+                       "metadata":  {
+                                        "label":  "attack",
+                                        "technique":  "threadhijack",
+                                        "target":  "TestTarget.exe",
+                                        "extra":  {
+                                                      "notes":  "Suspends an existing thread, redirects RIP to a stub that calls LoadLibraryW and returns to the original RIP."
+                                                  }
+                                    }
+                   },
+    "resolved":  {
+                     "target":  {
+                                    "executable":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                    "workingDirectory":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release",
+                                    "arguments":  ""
+                                },
+                     "telemetry":  {
+                                       "executable":  "C:\\elam\\bin\\Telemetry.exe",
+                                       "workingDirectory":  "C:\\elam"
+                                   },
+                     "manipulation":  {
+                                          "executable":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+                                          "workingDirectory":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release",
+                                          "commandLineTemplate":  "inject-threadhijack --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\x64\\Release\\TestDll.dll --call RunTest"
+                                      }
+                 },
+    "output":  {
+                   "directory":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260705_210558-basic-threadhijack-ppl",
+                   "telemetry":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260705_210558-basic-threadhijack-ppl\\telemetry.jsonl",
+                   "manifest":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260705_210558-basic-threadhijack-ppl\\manifest.json"
+               },
+    "execution":  {
+                      "startedAt":  "2026-07-05T21:05:58.2033002+01:00",
+                      "warmupSeconds":  3,
+                      "cooldownSeconds":  5,
+                      "mode":  "ppl",
+                      "sessionName":  "TISession",
+                      "vmLoggingPid":  12736,
+                      "commands":  {
+                                       "target":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                       "telemetry":  "C:\\elam\\bin\\Telemetry.exe --provider {F4E1897C-BB5D-5668-F1D8-040F4D8DD344}:ThreatIntelligence --provider {22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}:KernelProcess --provider {5770385F-C22A-43E0-BF4C-06F5698FFBD9}:Sysmon --output C:\\elam\\ti_test.json --session TISession --enable-vm-logging-pid 12736 --run-id 20260705_210558-basic-threadhijack-ppl --label attack --technique threadhijack --target TestTarget.exe --meta \"notes=Suspends an existing thread, redirects RIP to a stub that calls LoadLibraryW and returns to the original RIP.\"",
+                                       "manipulation":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\ProcessToolkit.exe inject-threadhijack --pid 12736 --dll C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestDll.dll --call RunTest"
+                                   },
+                      "targetPid":  12736,
+                      "pplrunnerPid":  null,
+                      "telemetryPid":  7804,
+                      "manipulationPid":  1952,
+                      "targetExitCode":  -1,
+                      "manipulationExitCode":  0,
+                      "status":  "completed",
+                      "finishedAt":  "2026-07-05T21:06:13.7364504+01:00"
+                  }
+}

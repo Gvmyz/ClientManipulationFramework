@@ -1,0 +1,93 @@
+﻿{
+    "schemaVersion":  1,
+    "sourceManifestPath":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\manifests\\basic-patch-data.json",
+    "runId":  "20260709_072438-basic-patch-data-ppl",
+    "experiment":  {
+                       "name":  "basic-patch-data",
+                       "description":  "External memory patching: change TestTarget\u0027s stack-local `value` variable from 600 to 9999 using WriteProcessMemory from a separate process. No code injection, no new thread or DLL inside the target. The expected outcome with the current ETW provider list is an empty trace â€” the kernel-process provider does not surface cross-process memory writes. That absence is itself the finding.",
+                       "providers":  [
+                                         {
+                                             "guid":  "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+                                             "name":  "ThreatIntelligence"
+                                         },
+                                         {
+                                             "guid":  "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+                                             "name":  "KernelProcess"
+                                         },
+                                         {
+                                             "guid":  "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+                                             "name":  "Sysmon"
+                                         }
+                                     ],
+                       "sessionName":  "TISession",
+                       "timings":  {
+                                       "warmupSeconds":  3,
+                                       "cooldownSeconds":  3
+                                   },
+                       "target":  {
+                                      "executable":  "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                      "arguments":  "",
+                                      "workingDirectory":  "ProcessToolkit\\x64\\Release"
+                                  },
+                       "telemetry":  {
+                                         "executable":  "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+                                         "workingDirectory":  "ProcessToolkit\\x64\\Release"
+                                     },
+                       "manipulation":  {
+                                            "executable":  "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+                                            "workingDirectory":  "ProcessToolkit\\x64\\Release",
+                                            "commandLineTemplate":  "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000"
+                                        },
+                       "metadata":  {
+                                        "label":  "attack",
+                                        "technique":  "memorypatch",
+                                        "target":  "TestTarget.exe",
+                                        "extra":  {
+                                                      "variant":  "data",
+                                                      "notes":  "Writes 0F270000 (= 9999 as little-endian int32) into TestTarget\u0027s `value` variable. Press SPACE after the run to observe value=10000, confirming the patch landed. --verify reads the bytes back to confirm the write."
+                                                  }
+                                    }
+                   },
+    "resolved":  {
+                     "target":  {
+                                    "executable":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                    "workingDirectory":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release",
+                                    "arguments":  ""
+                                },
+                     "telemetry":  {
+                                       "executable":  "C:\\elam\\bin\\Telemetry.exe",
+                                       "workingDirectory":  "C:\\elam"
+                                   },
+                     "manipulation":  {
+                                          "executable":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+                                          "workingDirectory":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release",
+                                          "commandLineTemplate":  "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000"
+                                      }
+                 },
+    "output":  {
+                   "directory":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260709_072438-basic-patch-data-ppl",
+                   "telemetry":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260709_072438-basic-patch-data-ppl\\telemetry.jsonl",
+                   "manifest":  "C:\\Users\\lab\\ClientManipulationFramework\\experiments\\runs\\20260709_072438-basic-patch-data-ppl\\manifest.json"
+               },
+    "execution":  {
+                      "startedAt":  "2026-07-09T07:24:38.8636343+01:00",
+                      "warmupSeconds":  3,
+                      "cooldownSeconds":  3,
+                      "mode":  "ppl",
+                      "sessionName":  "TISession",
+                      "vmLoggingPid":  3468,
+                      "commands":  {
+                                       "target":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\TestTarget.exe",
+                                       "telemetry":  "C:\\elam\\bin\\Telemetry.exe --provider {F4E1897C-BB5D-5668-F1D8-040F4D8DD344}:ThreatIntelligence --provider {22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}:KernelProcess --provider {5770385F-C22A-43E0-BF4C-06F5698FFBD9}:Sysmon --output C:\\elam\\ti_test.json --session TISession --enable-vm-logging-pid 3468 --run-id 20260709_072438-basic-patch-data-ppl --label attack --technique memorypatch --target TestTarget.exe --meta variant=data --meta \"notes=Writes 0F270000 (= 9999 as little-endian int32) into TestTarget\u0027s `value` variable. Press SPACE after the run to observe value=10000, confirming the patch landed. --verify reads the bytes back to confirm the write.\"",
+                                       "manipulation":  "C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\x64\\Release\\ProcessToolkit.exe patch-memory --pid 3468 --address 0x8995EFFD60 --bytes 0F270000"
+                                   },
+                      "targetPid":  3468,
+                      "pplrunnerPid":  null,
+                      "telemetryPid":  17144,
+                      "manipulationPid":  8036,
+                      "targetExitCode":  -1,
+                      "manipulationExitCode":  0,
+                      "status":  "completed",
+                      "finishedAt":  "2026-07-09T07:24:48.0138301+01:00"
+                  }
+}

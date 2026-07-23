@@ -337,23 +337,45 @@ try {
 
     # ---- 6. Run the manipulation ----
     if ($externalManipulation) {
-        # External-attacker mode: display the target PID and wait for the
-        # operator to drive the injection out-of-band (Metasploit, Sliver, etc.)
-        # and press Enter.
-        Write-Host ''
-        Write-Host '================================================================' -ForegroundColor Cyan
-        Write-Host ('  EXTERNAL ATTACKER MODE') -ForegroundColor Yellow
-        Write-Host ('  Target PID: {0}' -f $targetProcess.Id) -ForegroundColor Yellow
-        Write-Host ''
-        Write-Host '  Now drive the injection externally (e.g. in msfconsole run:'
-        Write-Host ('     migrate {0}' -f $targetProcess.Id) -ForegroundColor Green
-        Write-Host '  When the migration/injection has completed, come back HERE'
-        Write-Host '  and press Enter to trigger cooldown + capture teardown.'
-        Write-Host '================================================================' -ForegroundColor Cyan
-        Write-Host ''
-        [void](Read-Host 'Press Enter to continue (Ctrl+C to abort)')
-        $result.execution.commands.manipulation = '<external attacker>'
-        $result.execution.manipulationExitCode  = 0
+        # No manipulation section → two sub-modes:
+        #   observationSeconds set  → BASELINE: observe the target for a fixed window (no attacker)
+        #   observationSeconds unset → EXTERNAL ATTACKER: pause for operator (Meterpreter, Sliver, ...)
+        $observationSeconds = 0
+        if ($manifest.timings.PSObject.Properties['observationSeconds']) {
+            $observationSeconds = [int]$manifest.timings.observationSeconds
+        }
+
+        if ($observationSeconds -gt 0) {
+            # Baseline observation window — no attacker, just watch the target
+            # for a fixed duration. Used for `baseline_*` manifests.
+            Write-Host ''
+            Write-Host '================================================================' -ForegroundColor Cyan
+            Write-Host ('  BASELINE OBSERVATION MODE') -ForegroundColor Yellow
+            Write-Host ('  Target PID: {0}' -f $targetProcess.Id) -ForegroundColor Yellow
+            Write-Host ('  Observing for {0} seconds...' -f $observationSeconds)
+            Write-Host '================================================================' -ForegroundColor Cyan
+            Start-Sleep -Seconds $observationSeconds
+            $result.execution.commands.manipulation = ('<baseline observation {0}s>' -f $observationSeconds)
+            $result.execution.manipulationExitCode  = 0
+        } else {
+            # External-attacker mode: display the target PID and wait for the
+            # operator to drive the injection out-of-band (Metasploit, Sliver, etc.)
+            # and press Enter.
+            Write-Host ''
+            Write-Host '================================================================' -ForegroundColor Cyan
+            Write-Host ('  EXTERNAL ATTACKER MODE') -ForegroundColor Yellow
+            Write-Host ('  Target PID: {0}' -f $targetProcess.Id) -ForegroundColor Yellow
+            Write-Host ''
+            Write-Host '  Now drive the injection externally (e.g. in msfconsole run:'
+            Write-Host ('     migrate {0}' -f $targetProcess.Id) -ForegroundColor Green
+            Write-Host '  When the migration/injection has completed, come back HERE'
+            Write-Host '  and press Enter to trigger cooldown + capture teardown.'
+            Write-Host '================================================================' -ForegroundColor Cyan
+            Write-Host ''
+            [void](Read-Host 'Press Enter to continue (Ctrl+C to abort)')
+            $result.execution.commands.manipulation = '<external attacker>'
+            $result.execution.manipulationExitCode  = 0
+        }
     } else {
         $manipulationCommandLine = Resolve-Template `
             -Template ([string]$manifest.manipulation.commandLineTemplate) `

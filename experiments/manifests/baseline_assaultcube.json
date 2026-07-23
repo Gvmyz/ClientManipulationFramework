@@ -1,0 +1,40 @@
+{
+  "name": "baseline_assaultcube",
+  "description": "AssaultCube benign baseline. Launches ac_client.exe directly (bypassing the .bat launcher so PID scoping works), which auto-starts a scripted local bot match via the autostart config at ~/Documents/My Games/AssaultCube/v1.3/config/autostart/autostart-baseline.cfg. Fixed observation window, no player input. Establishes the noise floor for RQ4 attack-vs-benign discrimination and for the AssaultCube-cross-target comparison in RQ1.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 10,
+    "observationSeconds": 30,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\" --init",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "metadata": {
+    "label": "benign",
+    "technique": "assaultcube-baseline",
+    "class": "baseline",
+    "variant": "assaultcube",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "AssaultCube",
+    "extra": {
+      "target_version": "1.3.0.2",
+      "target_bitness": "x86",
+      "windows_build": "26200",
+      "scripted_input": "autostart-baseline.cfg (mode 10 BotDeathmatch, ac_desert, +3 extra bots)",
+      "notes": "45s total run: 10s warmup (game launch + map load) + 30s in-game observation + 5s cooldown."
+    }
+  }
+}

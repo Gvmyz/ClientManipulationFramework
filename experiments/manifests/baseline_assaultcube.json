@@ -14,7 +14,7 @@
   },
   "target": {
     "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
-    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\" --init",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
     "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
   },
   "telemetry": {

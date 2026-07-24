@@ -1,7 +1,12 @@
 <!--
   Sysmon config for the ClientManipulationFramework experiments. Scoped to
-  TestTarget.exe (+ ProcessToolkit.exe for ProcessCreate) so the Telemetry
+  TestTarget.exe (synthetic experiments) + ac_client.exe (AssaultCube phase 1+)
+  + ProcessToolkit.exe (attacker process for synthetic runs) so the Telemetry
   consumer sees a focused stream. Schema 4.90 matches Sysmon 14.x.
+
+  To add a new target: append its executable name to each of the four
+  target-scoped rule groups (ImageLoad, CreateRemoteThread, ProcessAccess,
+  ProcessTampering). ProcessCreate additionally lists attacker processes.
 
   Enabled events:
     1  ProcessCreate
@@ -15,6 +20,7 @@
     <RuleGroup name="ProcessCreate" groupRelation="or">
       <ProcessCreate onmatch="include">
         <Image condition="end with">TestTarget.exe</Image>
+        <Image condition="end with">ac_client.exe</Image>
         <Image condition="end with">ProcessToolkit.exe</Image>
       </ProcessCreate>
     </RuleGroup>
@@ -22,24 +28,28 @@
     <RuleGroup name="ImageLoad" groupRelation="or">
       <ImageLoad onmatch="include">
         <Image condition="end with">TestTarget.exe</Image>
+        <Image condition="end with">ac_client.exe</Image>
       </ImageLoad>
     </RuleGroup>
 
     <RuleGroup name="CreateRemoteThread" groupRelation="or">
       <CreateRemoteThread onmatch="include">
         <TargetImage condition="end with">TestTarget.exe</TargetImage>
+        <TargetImage condition="end with">ac_client.exe</TargetImage>
       </CreateRemoteThread>
     </RuleGroup>
 
     <RuleGroup name="ProcessAccess" groupRelation="or">
       <ProcessAccess onmatch="include">
         <TargetImage condition="end with">TestTarget.exe</TargetImage>
+        <TargetImage condition="end with">ac_client.exe</TargetImage>
       </ProcessAccess>
     </RuleGroup>
 
     <RuleGroup name="ProcessTampering" groupRelation="or">
       <ProcessTampering onmatch="include">
         <Image condition="end with">TestTarget.exe</Image>
+        <Image condition="end with">ac_client.exe</Image>
       </ProcessTampering>
     </RuleGroup>
   </EventFiltering>

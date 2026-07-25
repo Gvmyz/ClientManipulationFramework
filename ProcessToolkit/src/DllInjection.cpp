@@ -12,13 +12,29 @@
 #include "ModuleResolver.h"
 
 namespace {
-	// Thread argument to the manual-map loader stub.
+	// Thread argument to the manual-map loader stub. The pointer width is
+	// architecture-native so the same struct layout is used by the x64 and x86
+	// stub variants below (offsets differ; see stubs).
 	struct LoaderParams {
 		std::uintptr_t image_base;  // HMODULE in the remote process
 		std::uintptr_t dll_main;    // absolute VA of DllMain in the remote process
 	};
 
-	// Manual-map loader stub. Entry: RCX = LoaderParams*. Calls
+	// PROGRAM COUNTER ACCESSOR — hides the CONTEXT struct field difference
+	// between x64 (Rip) and x86 (Eip) so the threadhijack code doesn't need
+	// its own #ifdefs. Returns a reference so it can be used on both sides of
+	// the assignment.
+	inline std::uintptr_t& context_pc(CONTEXT& ctx) {
+#ifdef _WIN64
+		return reinterpret_cast<std::uintptr_t&>(ctx.Rip);
+#else
+		return reinterpret_cast<std::uintptr_t&>(ctx.Eip);
+#endif
+	}
+
+#ifdef _WIN64
+	// ============================== x64 STUBS ==============================
+	// Manual-map loader stub (x64). Entry: RCX = LoaderParams*. Calls
 	// DllMain(image_base, DLL_PROCESS_ATTACH, NULL) and returns its result.
 	// The 0x28 reserves 32 bytes of shadow space + 8 bytes to re-align RSP
 	// to 16 before `call rax` (x64 ABI: aligned at the CALL instruction).
@@ -33,17 +49,13 @@ namespace {
 		0xC3                           // ret
 	};
 
-	// Thread-hijack stub. Entered with arbitrary register/RSP state (whatever the
-	// hijacked thread had when SuspendThread + SetThreadContext redirected its RIP
-	// here). Calls LoadLibraryW(dll_path) then jumps back to the original RIP with
-	// every register, flag, and the stack pointer restored.
+	// Thread-hijack stub (x64). Entered with arbitrary register/RSP state (whatever
+	// the hijacked thread had when SuspendThread + SetThreadContext redirected its
+	// RIP here). Calls LoadLibraryW(dll_path) then jumps back to the original RIP
+	// with every register, flag, and the stack pointer restored.
 	//
 	// Three 64-bit immediates are patched at injection time (see offsets below):
 	//   +27: dll_path VA, +37: LoadLibraryW VA, +67: original RIP.
-	//
-	// Flow: save flags + all volatile regs + r12 (stash for RSP), align stack and
-	// reserve shadow space, call LoadLibraryW, restore everything, then a
-	// push/xchg/ret dance to jump indirectly without leaving rax clobbered.
 	constexpr std::uint8_t k_hijack_stub[] = {
 		/* +00 */ 0x9C,                                              // pushfq
 		/* +01 */ 0x50,                                              // push rax
@@ -79,9 +91,57 @@ namespace {
 		/* +79 */ 0xC3                                               // ret              ; jumps to orig_rip, rsp back to original
 	};
 
-	constexpr std::size_t k_hijack_dll_path_offset = 27;
+	constexpr std::size_t k_hijack_dll_path_offset    = 27;
 	constexpr std::size_t k_hijack_loadlibrary_offset = 37;
-	constexpr std::size_t k_hijack_origrip_offset = 67;
+	constexpr std::size_t k_hijack_origrip_offset     = 67;
+
+#else
+	// ============================== x86 STUBS ==============================
+	// Manual-map loader stub (x86). Called as a __stdcall thread proc, so on
+	// entry the arg (LoaderParams*) is at [esp+4]. DllMain is __stdcall too
+	// (BOOL WINAPI DllMain), so it cleans up its own 12 bytes of args; we
+	// return with `ret 4` to clean up our own single 4-byte arg. Offsets are
+	// half the x64 version because pointers are 32-bit here.
+	constexpr std::uint8_t k_loader_stub[] = {
+		/* +00 */ 0x8B, 0x4C, 0x24, 0x04,   // mov  ecx, [esp+4]         ; ecx = LoaderParams*
+		/* +04 */ 0x6A, 0x00,               // push 0                     ; lpReserved = NULL
+		/* +06 */ 0x6A, 0x01,               // push 1                     ; fdwReason = DLL_PROCESS_ATTACH
+		/* +08 */ 0xFF, 0x31,               // push dword ptr [ecx]       ; hinstDLL = image_base
+		/* +10 */ 0xFF, 0x51, 0x04,         // call dword ptr [ecx+4]     ; dll_main
+		/* +13 */ 0xC2, 0x04, 0x00,         // ret  4                     ; stdcall thread proc cleanup
+	};
+
+	// Thread-hijack stub (x86). Same shape as the x64 version but uses pushfd/
+	// pushad to save every general-purpose register + flags in 9 bytes, then
+	// pushes the dll path and calls LoadLibraryW (__stdcall: it cleans up the
+	// arg). Restores state with popad/popfd. Finally, push the saved EIP and
+	// `ret` to jump back to the hijacked thread's original instruction.
+	//
+	// Three 32-bit immediates patched at injection time:
+	//   +03: dll_path VA, +08: LoadLibraryW VA, +17: original EIP.
+	//
+	// pushad pushes eax,ecx,edx,ebx,esp,ebp,esi,edi in that order. popad skips
+	// the stored esp (does not restore actual esp from it), so our short
+	// sequence is symmetric even though we don't touch esp between them.
+	constexpr std::uint8_t k_hijack_stub[] = {
+		/* +00 */ 0x9C,                     // pushfd
+		/* +01 */ 0x60,                     // pushad
+		/* +02 */ 0x68,                     // push imm32                 ; dll path
+		/* +03 */ 0,0,0,0,                  //                            <-- patch (dll_path VA)
+		/* +07 */ 0xB8,                     // mov  eax, imm32            ; LoadLibraryW
+		/* +08 */ 0,0,0,0,                  //                            <-- patch (LoadLibraryW VA)
+		/* +12 */ 0xFF, 0xD0,               // call eax                   ; stdcall: LoadLibraryW pops its arg
+		/* +14 */ 0x61,                     // popad
+		/* +15 */ 0x9D,                     // popfd
+		/* +16 */ 0x68,                     // push imm32                 ; original EIP
+		/* +17 */ 0,0,0,0,                  //                            <-- patch (orig EIP)
+		/* +21 */ 0xC3,                     // ret                        ; jumps to orig EIP
+	};
+
+	constexpr std::size_t k_hijack_dll_path_offset    = 3;
+	constexpr std::size_t k_hijack_loadlibrary_offset = 8;
+	constexpr std::size_t k_hijack_origrip_offset     = 17;
+#endif
 }
 
 namespace PT::DllInjection {
@@ -456,8 +516,11 @@ namespace PT::DllInjection {
 			ResumeThread(thread.get());
 			return std::nullopt;
 		}
-		// User-mode RIP we'll overwrite (and restore from inside the stub).
-		const std::uintptr_t original_rip = ctx.Rip;
+		// User-mode program counter we'll overwrite (and restore from inside
+		// the stub). Uses context_pc() so the same code compiles on x64 (Rip)
+		// and x86 (Eip). Variable name stays "original_rip" for legacy grep-
+		// ability; on x86 it holds an EIP.
+		const std::uintptr_t original_rip = context_pc(ctx);
 
 		// One remote allocation laid out as [shellcode | wide dll_path].
 		const SIZE_T path_bytes = (dll_path.size() + 1) * sizeof(wchar_t);
@@ -491,8 +554,10 @@ namespace PT::DllInjection {
 			return std::nullopt;
 		}
 
-		// Redirect RIP to the stub. CONTROL-only update keeps the rest intact.
-		ctx.Rip = remote_base;
+		// Redirect the program counter to the stub. CONTROL-only update keeps
+		// the rest of the context intact. context_pc() aliases Rip on x64,
+		// Eip on x86.
+		context_pc(ctx) = remote_base;
 		ctx.ContextFlags = CONTEXT_CONTROL;
 		if (!SetThreadContext(thread.get(), &ctx)) {
 			PT::ProcessMemory::remote_free(process, remote_mem);

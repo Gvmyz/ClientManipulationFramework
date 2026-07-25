@@ -23,7 +23,7 @@
   "manipulation": {
     "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
     "workingDirectory": "ProcessToolkit\\Win32\\Release",
-    "commandLineTemplate": "inject-threadhijack --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\Win32\\Release\\TestDll.dll --call RunTest"
+    "commandLineTemplate": "inject-threadhijack --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\Win32\\Release\\TestDll.dll"
   },
   "metadata": {
     "label": "attack",

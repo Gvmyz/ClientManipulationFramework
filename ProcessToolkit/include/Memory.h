@@ -94,6 +94,13 @@ namespace PT {
 
 		std::optional<DWORD> wait_for_thread_exit_code(const WinHandle& thread, DWORD wait_time = INFINITE);
 
-		std::optional<uintptr_t> find_module_base(const WinHandle& process, const std::wstring_view& module_name, DWORD filter_flag = LIST_MODULES_64BIT);
+		// filter_flag defaults to LIST_MODULES_ALL (0x03 = 32-bit | 64-bit).
+		// The earlier LIST_MODULES_64BIT default silently failed against 32-bit
+		// targets like AssaultCube (a 32-bit process has zero 64-bit modules,
+		// so EnumProcessModulesEx returned an empty list). LIST_MODULES_ALL
+		// enumerates modules regardless of target bitness and works for both
+		// x64 ProcessToolkit → x64 TestTarget and x86 ProcessToolkit → x86
+		// AssaultCube pairings.
+		std::optional<uintptr_t> find_module_base(const WinHandle& process, const std::wstring_view& module_name, DWORD filter_flag = LIST_MODULES_ALL);
 	}
 }

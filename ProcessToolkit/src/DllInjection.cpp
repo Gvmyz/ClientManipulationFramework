@@ -207,13 +207,21 @@ namespace PT::DllInjection {
 		if (!file.read(reinterpret_cast<char*>(file_buf.data()), static_cast<std::streamsize>(file_size)))
 			return std::nullopt;
 
-		// Parse and validate PE headers (we only support x64).
+		// Parse and validate PE headers. Machine type must match the current
+		// build: x64 ProcessToolkit maps x64 DLLs into x64 targets, x86
+		// ProcessToolkit maps x86 DLLs into x86 targets. Cross-arch mapping
+		// (e.g. x86 DLL into x64 target) is not supported because the loader
+		// stub's calling convention and the imported-DLL VAs would mismatch.
 		PIMAGE_DOS_HEADER dos_hdr = reinterpret_cast<PIMAGE_DOS_HEADER>(file_buf.data());
 		if (dos_hdr->e_magic != IMAGE_DOS_SIGNATURE) return std::nullopt;
 
 		PIMAGE_NT_HEADERS nt_hdrs = reinterpret_cast<PIMAGE_NT_HEADERS>(file_buf.data() + dos_hdr->e_lfanew);
 		if (nt_hdrs->Signature != IMAGE_NT_SIGNATURE) return std::nullopt;
+#ifdef _WIN64
 		if (nt_hdrs->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64) return std::nullopt;
+#else
+		if (nt_hdrs->FileHeader.Machine != IMAGE_FILE_MACHINE_I386) return std::nullopt;
+#endif
 
 		const DWORD image_size = nt_hdrs->OptionalHeader.SizeOfImage;
 		const DWORD headers_size = nt_hdrs->OptionalHeader.SizeOfHeaders;
@@ -315,7 +323,12 @@ namespace PT::DllInjection {
 						return std::nullopt;
 					}
 
-					thunk_iat->u1.Function = reinterpret_cast<ULONGLONG>(func_addr);
+					// PIMAGE_THUNK_DATA is auto-selected as _32 on x86 (u1.Function
+					// is DWORD, 4 bytes) and _64 on x64 (u1.Function is ULONGLONG,
+					// 8 bytes). uintptr_t matches the current arch's pointer
+					// width so the assignment is exact on both — no narrowing
+					// warning on x86, no zero-extension noise on x64.
+					thunk_iat->u1.Function = reinterpret_cast<std::uintptr_t>(func_addr);
 				}
 			}
 		}

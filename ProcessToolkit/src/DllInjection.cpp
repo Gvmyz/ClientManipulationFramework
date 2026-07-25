@@ -7,6 +7,7 @@
 
 #include <TlHelp32.h>
 
+#include "Memory.h"
 #include "ProcessMemory.h"
 #include "ProcessThread.h"
 #include "ModuleResolver.h"
@@ -571,10 +572,33 @@ namespace PT::DllInjection {
 			return std::nullopt;
 		}
 
-		// Brief wait so a follow-up find_module_base in the caller can see the new
-		// module. We intentionally leak remote_mem: the stub may run later if the
-		// hijacked thread was in a long syscall. TODO: use a canary instead.
+		// Brief wait so the stub has a chance to run and LoadLibraryW to register
+		// the module in the target's PEB. We intentionally leak remote_mem: the
+		// stub may run later if the hijacked thread was in a long syscall.
+		// TODO: use a canary instead.
 		Sleep(500);
+
+		// Verify the DLL actually loaded. Threadhijack asynchronously redirects
+		// EIP/RIP to the stub, so unlike inject_dll_loadlibrary and
+		// inject_dll_manualmap we don't get a thread exit code to check. Poll
+		// the target's module list instead — if TestDll is present, the stub
+		// ran and LoadLibraryW succeeded. Retry once at 500ms in case the
+		// hijacked thread was mid-syscall. We accept the small cost of one or
+		// two EnumProcessModulesEx calls (which add ambient READVM_REMOTE
+		// events) in exchange for a reliable manipulation_exit_code.
+		std::wstring dll_basename;
+		{
+			const auto pos = dll_path.find_last_of(L"\\/");
+			dll_basename = (pos == std::wstring_view::npos)
+				? std::wstring(dll_path)
+				: std::wstring(dll_path.substr(pos + 1));
+		}
+		if (!PT::Memory::find_module_base(process, dll_basename).has_value()) {
+			Sleep(500);
+			if (!PT::Memory::find_module_base(process, dll_basename).has_value()) {
+				return std::nullopt;
+			}
+		}
 
 		return hijacked_tid;
 	}

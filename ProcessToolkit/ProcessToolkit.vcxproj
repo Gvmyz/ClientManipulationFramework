@@ -151,7 +151,9 @@
     <ClCompile Include="external\imgui\imgui_tables.cpp" />
     <ClCompile Include="external\imgui\imgui_widgets.cpp" />
     <ClCompile Include="src\DllInjection.cpp" />
+    <ClCompile Include="src\HookInjection.cpp" />
     <ClCompile Include="src\Injector.cpp" />
+    <ClCompile Include="src\LengthDisasm.cpp" />
     <ClCompile Include="src\inspector.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\Memory.cpp" />
@@ -174,7 +176,9 @@
     <ClInclude Include="external\imgui\imstb_textedit.h" />
     <ClInclude Include="external\imgui\imstb_truetype.h" />
     <ClInclude Include="include\DllInjection.h" />
+    <ClInclude Include="include\HookInjection.h" />
     <ClInclude Include="include\Injector.h" />
+    <ClInclude Include="include\LengthDisasm.h" />
     <ClInclude Include="include\inspector.h" />
     <ClInclude Include="include\Memory.h" />
     <ClInclude Include="include\MemoryPatch.h" />

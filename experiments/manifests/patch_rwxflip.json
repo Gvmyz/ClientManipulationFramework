@@ -1,0 +1,40 @@
+{
+  "name": "patch_rwxflip",
+  "description": "External memory patching with a protection flip: VirtualProtectEx to PAGE_EXECUTE_READWRITE → WriteProcessMemory → VirtualProtectEx to restore. Distinguishes itself from the direct-write patch variant by generating PROTECTVM_REMOTE events in ETW-TI. This is the pattern trainers use when the target region isn't writable-by-default (e.g. code patching a running game).",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 3
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000 --restore-protection --verify"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "patch_rwxflip",
+    "class": "patch",
+    "variant": "rwxflip",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "TestTarget.exe",
+    "extra": {
+      "notes": "Writes 0F270000 (=9999 as little-endian int32) into TestTarget's `value` variable, with an RWX protection flip around the write. Expected fingerprint delta vs patch_direct: threatint_remote_protect_observed becomes True; threatint_cross_process_count increases by 2 (one PROTECTVM to RWX, one to restore). Attacker mask increases (RWX flip requires PROCESS_VM_OPERATION | PROCESS_VM_WRITE which we already have from --verify)."
+    }
+  }
+}

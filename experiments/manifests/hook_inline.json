@@ -1,0 +1,43 @@
+{
+  "name": "hook_inline",
+  "description": "Cross-process inline hook: attacker overwrites the first 15 bytes of a target function with a 14-byte absolute JMP + 1 NOP that redirects to a trampoline shellcode allocated (RWX) in the target. The trampoline atomically increments a hit counter, executes the preserved 15-byte prologue verbatim, and jumps back to target_function + 15 so the hooked function continues normally. Distinct from injection variants: no full DLL is mapped and no remote thread is created. Distinct from patch variants: the write targets the .text region (previously PAGE_EXECUTE_READ) and is accompanied by a fresh RWX ALLOCVM_REMOTE for the trampoline. This is the primitive behind trainer/ESP hooks of graphics APIs (Direct3D Present/EndScene) documented across GuidedHacking, MinHook, and Microsoft Detours.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "hook-inline --pid {targetPid} --address {targetInfo.hookable_function_addr} --verify --verify-wait-ms 2000"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "hook_inline",
+    "class": "hook",
+    "variant": "inline",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "TestTarget.exe",
+    "extra": {
+      "preserve_bytes": 15,
+      "jmp_length": 14,
+      "trampoline_size_bytes": 4096,
+      "notes": "Expected fingerprint: 1x ALLOCVM_REMOTE (RWX trampoline, ~4KB), 1x READVM_REMOTE (prologue read), 1x WRITEVM_REMOTE (trampoline write, ~4KB), 1x PROTECTVM_REMOTE (.text → RWX for 15 bytes), 1x WRITEVM_REMOTE (15-byte detour write into .text), 1x PROTECTVM_REMOTE (.text restore). No THREAD_CREATE_REMOTE (unlike injection classes). The .text-directed WRITEVM is the primary signal separating this technique from patch_direct (data-only) and patch_rwxflip (data with protection flip)."
+    }
+  }
+}

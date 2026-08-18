@@ -1,0 +1,42 @@
+{
+  "name": "patch_tick",
+  "description": "Cheat-Engine-style value freeze: 20 WriteProcessMemory writes at 50ms intervals against TestTarget's `value` variable. Simulates a trainer that continuously restamps a game state to a target value. The fingerprint is a burst of ~20 WRITEVM_REMOTE events over ~1 second, distinguishing this pattern from a single one-shot write.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000 --tick-count 20 --tick-interval-ms 50 --verify"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "patch_tick",
+    "class": "patch",
+    "variant": "tick",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "TestTarget.exe",
+    "extra": {
+      "tick_count": 20,
+      "tick_interval_ms": 50,
+      "notes": "20 ticks × 50ms = 1s of writes, then verify. Expected fingerprint delta vs patch_direct: threatint_cross_process_write_count ≈ 20 (vs 1 for direct). Total ETW-TI event count increases proportionally. No protection changes (no --restore-protection), so threatint_remote_protect_observed stays False."
+    }
+  }
+}

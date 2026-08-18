@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "DllInjection.h"
+#include "HookInjection.h"
 #include "Memory.h"
 #include "MemoryPatch.h"
 #include "Process.h"
@@ -32,6 +33,30 @@ namespace {
 		std::optional<std::vector<std::uint8_t>> bytes;
 		bool restore_protection{false};
 		bool verify{false};
+		// patch-memory tick mode: repeatedly write the same bytes at a fixed
+		// interval (Cheat-Engine "freeze value" pattern). tick_count=1 (default)
+		// preserves the classic one-shot behaviour.
+		int tick_count{1};
+		int tick_interval_ms{0};
+		// hook-inline: how long to wait after installing the hook before
+		// reading back the trampoline's hit counter (--verify only).
+		int verify_wait_ms{2000};
+		// hook-inline: minimum trampoline hit count required for --verify to
+		// pass. Default 1 = "the hooked function must have executed through
+		// the detour at least once during verify_wait_ms". Pass 0 to skip the
+		// counter check entirely — useful for hooking game functions whose
+		// call cadence we don't know in advance (e.g. rare AC handlers).
+		int min_verify_hits{1};
+		// hook-inline: total bytes to overwrite at the target function.
+		// Must be >= the architecture's JMP length (14 x64, 5 x86). 0 means
+		// "let the disassembler auto-detect the smallest aligned length".
+		std::size_t preserve_bytes{0};
+		// hook-inline: --module (reused from injection) + --rva pair resolves
+		// the target address against a loaded module's base — e.g.
+		// `--module ac_client.exe --rva 0x12345` for an AssaultCube .text
+		// function whose RVA came from disassembly. --address takes precedence
+		// if both forms are supplied.
+		std::optional<std::uintptr_t> rva;
 	};
 
 	void print_usage(const wchar_t* exe_name) {
@@ -42,14 +67,22 @@ namespace {
 			<< L"  " << exe_name << L" inject-loadlibrary --pid <pid> --dll <path> [--module <name>] [--call <export>]\n"
 			<< L"  " << exe_name << L" inject-manualmap --pid <pid> --dll <path> [--call <export>]\n"
 			<< L"  " << exe_name << L" inject-threadhijack --pid <pid> --dll <path> [--module <name>] [--call <export>]\n"
-			<< L"  " << exe_name << L" patch-memory --pid <pid> --address <hex> --bytes <hex> [--restore-protection] [--verify]\n\n"
+			<< L"  " << exe_name << L" patch-memory --pid <pid> --address <hex> --bytes <hex>\n"
+			<< L"                              [--restore-protection] [--verify]\n"
+			<< L"                              [--tick-count <N>] [--tick-interval-ms <ms>]\n"
+			<< L"  " << exe_name << L" hook-inline --pid <pid>\n"
+			<< L"                              (--address <hex> | --module <name> --rva <hex>)\n"
+			<< L"                              [--preserve-bytes <N>] [--verify]\n"
+			<< L"                              [--verify-wait-ms <ms>]\n\n"
 			<< L"Examples:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid 1234 --committed --executable\n"
 			<< L"  " << exe_name << L" inject-loadlibrary --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
 			<< L"  " << exe_name << L" inject-manualmap --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
 			<< L"  " << exe_name << L" inject-threadhijack --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
-			<< L"  " << exe_name << L" patch-memory --pid 1234 --address 0x7FF6C0123ABC --bytes 0F270000 --verify\n";
+			<< L"  " << exe_name << L" patch-memory --pid 1234 --address 0x7FF6C0123ABC --bytes 0F270000 --verify\n"
+			<< L"  " << exe_name << L" hook-inline --pid 1234 --address 0x7FF6C0123ABC --verify\n"
+			<< L"  " << exe_name << L" hook-inline --pid 1234 --module ac_client.exe --rva 0x12345 --verify\n";
 	}
 
 	std::optional<DWORD> parse_pid(std::wstring_view value) {
@@ -178,6 +211,69 @@ namespace {
 				options.restore_protection = true;
 			} else if (arg == L"--verify") {
 				options.verify = true;
+			} else if (arg == L"--tick-count" && i + 1 < argc) {
+				try {
+					options.tick_count = std::stoi(argv[++i]);
+				} catch (...) {
+					PT::Cli::print_error("Invalid --tick-count value (expected positive integer)");
+					return std::nullopt;
+				}
+				if (options.tick_count < 1) {
+					PT::Cli::print_error("--tick-count must be >= 1");
+					return std::nullopt;
+				}
+			} else if (arg == L"--tick-interval-ms" && i + 1 < argc) {
+				try {
+					options.tick_interval_ms = std::stoi(argv[++i]);
+				} catch (...) {
+					PT::Cli::print_error("Invalid --tick-interval-ms value (expected integer >= 0)");
+					return std::nullopt;
+				}
+				if (options.tick_interval_ms < 0) {
+					PT::Cli::print_error("--tick-interval-ms must be >= 0");
+					return std::nullopt;
+				}
+			} else if (arg == L"--verify-wait-ms" && i + 1 < argc) {
+				try {
+					options.verify_wait_ms = std::stoi(argv[++i]);
+				} catch (...) {
+					PT::Cli::print_error("Invalid --verify-wait-ms value (expected integer >= 0)");
+					return std::nullopt;
+				}
+				if (options.verify_wait_ms < 0) {
+					PT::Cli::print_error("--verify-wait-ms must be >= 0");
+					return std::nullopt;
+				}
+			} else if (arg == L"--preserve-bytes" && i + 1 < argc) {
+				try {
+					const int parsed = std::stoi(argv[++i]);
+					if (parsed < 0) {
+						PT::Cli::print_error("--preserve-bytes must be >= 0");
+						return std::nullopt;
+					}
+					options.preserve_bytes = static_cast<std::size_t>(parsed);
+				} catch (...) {
+					PT::Cli::print_error("Invalid --preserve-bytes value (expected integer >= 0)");
+					return std::nullopt;
+				}
+			} else if (arg == L"--rva" && i + 1 < argc) {
+				auto rva = parse_hex_address(argv[++i]);
+				if (!rva) {
+					PT::Cli::print_error("Invalid --rva value (expected hex, e.g. 0x12345)");
+					return std::nullopt;
+				}
+				options.rva = *rva;
+			} else if (arg == L"--verify-hits" && i + 1 < argc) {
+				try {
+					options.min_verify_hits = std::stoi(argv[++i]);
+				} catch (...) {
+					PT::Cli::print_error("Invalid --verify-hits value (expected integer >= 0)");
+					return std::nullopt;
+				}
+				if (options.min_verify_hits < 0) {
+					PT::Cli::print_error("--verify-hits must be >= 0");
+					return std::nullopt;
+				}
 			} else {
 				std::wcerr << L"Unknown or incomplete argument: " << arg << L'\n';
 				return std::nullopt;
@@ -372,18 +468,46 @@ namespace {
 		PT::Cli::print_named_value(
 			"Toggle protection (RWX during write)",
 			options.restore_protection ? "yes" : "no");
-
-		auto outcome = PT::MemoryPatch::patch_bytes(
-			process, *options.address, *options.bytes, options.restore_protection);
-
-		if (!PT::Cli::run_step("Wrote bytes to remote memory", outcome.has_value())) {
-			return 1;
+		if (options.tick_count > 1) {
+			PT::Cli::print_named_value("Tick count", options.tick_count);
+			PT::Cli::print_named_value("Tick interval (ms)", options.tick_interval_ms);
 		}
 
-		PT::Cli::print_named_value("Bytes written", outcome->bytes_written);
+		// Tick mode: repeat the patch_bytes call N times with a fixed sleep in
+		// between. Each tick fires its own WRITEVM (and, if --restore-protection,
+		// two PROTECTVMs). tick_count=1 (default) makes this behave exactly
+		// like the classic one-shot patch — no code path change for existing
+		// runs. Interval 0 means "as fast as possible" (bursts).
+		SIZE_T last_bytes_written = 0;
+		DWORD  last_prev_protect  = 0;
+		bool   last_protect_restored = false;
+		for (int t = 0; t < options.tick_count; ++t) {
+			if (t > 0 && options.tick_interval_ms > 0) {
+				Sleep(static_cast<DWORD>(options.tick_interval_ms));
+			}
+			auto outcome = PT::MemoryPatch::patch_bytes(
+				process, *options.address, *options.bytes, options.restore_protection);
+			if (!outcome.has_value()) {
+				PT::Cli::run_step(
+					std::format("Wrote bytes to remote memory (tick {}/{})",
+								t + 1, options.tick_count),
+					false);
+				return 1;
+			}
+			last_bytes_written    = outcome->bytes_written;
+			last_prev_protect     = outcome->previous_protection;
+			last_protect_restored = outcome->protection_restored;
+		}
+
+		PT::Cli::run_step(
+			(options.tick_count > 1)
+				? std::format("Wrote bytes to remote memory ({} ticks OK)", options.tick_count)
+				: std::string("Wrote bytes to remote memory"),
+			true);
+		PT::Cli::print_named_value("Bytes written (per tick)", last_bytes_written);
 		if (options.restore_protection) {
-			PT::Cli::print_named_hex("Previous protection", outcome->previous_protection);
-			PT::Cli::run_step("Restored previous protection", outcome->protection_restored);
+			PT::Cli::print_named_hex("Previous protection (last tick)", last_prev_protect);
+			PT::Cli::run_step("Restored previous protection", last_protect_restored);
 		}
 
 		if (options.verify) {
@@ -395,6 +519,109 @@ namespace {
 			}
 			const bool match = (*read_back == *options.bytes);
 			if (!PT::Cli::run_step("Read-back matches requested patch", match)) {
+				return 1;
+			}
+		}
+
+		return 0;
+	}
+
+	int hook_inline(const Options& options) {
+		if (!options.pid) {
+			PT::Cli::print_error("hook-inline requires --pid");
+			return 2;
+		}
+		if (!options.address && !(options.module_name && options.rva)) {
+			PT::Cli::print_error("hook-inline requires --address, or --module + --rva");
+			return 2;
+		}
+
+		PT::Cli::print_section("Open Target Process");
+		auto process = PT::ProcessMemory::open_process(*options.pid);
+		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
+			return 1;
+		}
+
+		// Resolve --address, or --module + --rva → absolute target VA.
+		std::uintptr_t target_addr = 0;
+		if (options.address) {
+			target_addr = *options.address;
+		} else {
+			PT::Cli::print_section("Resolve Module + RVA");
+			auto mod_base = PT::Memory::find_module_base(process, *options.module_name);
+			if (!PT::Cli::run_step("Found target module base", mod_base.has_value())) {
+				return 1;
+			}
+			PT::Cli::print_named_hex("Module base", *mod_base);
+			PT::Cli::print_named_hex("RVA", *options.rva);
+			target_addr = *mod_base + *options.rva;
+		}
+
+		PT::Cli::print_section("Install Inline Hook");
+		PT::Cli::print_named_hex("Target function", target_addr);
+		if (options.preserve_bytes > 0) {
+			PT::Cli::print_named_value("Preserve bytes (requested)", options.preserve_bytes);
+		} else {
+			PT::Cli::print_named_value("Preserve bytes", "auto (disassembler)");
+		}
+
+		auto outcome = PT::HookInjection::install_inline_hook(
+			process, target_addr, options.preserve_bytes);
+		if (!PT::Cli::run_step("Installed inline hook", outcome.has_value())) {
+			return 1;
+		}
+
+		PT::Cli::print_named_hex("Trampoline base", outcome->trampoline_base);
+		PT::Cli::print_named_value("JMP length", outcome->hook_bytes_size);
+		PT::Cli::print_named_value("Bytes preserved / overwritten", outcome->preserved_bytes);
+		PT::Cli::print_named_hex("Previous .text protection", outcome->previous_protection);
+		PT::Cli::run_step("Restored .text protection", outcome->protection_restored);
+
+		if (options.verify) {
+			PT::Cli::print_section("Verify");
+
+			// (a) Read back the first byte of target_function; must be 0xFF (x64
+			//     absolute-JMP opcode `FF 25 ...`) or 0xE9 (x86 relative JMP).
+			auto post_hook_bytes = PT::MemoryPatch::read_bytes(
+				process, target_addr, outcome->preserved_bytes);
+			if (!PT::Cli::run_step("Read bytes back from target function", post_hook_bytes.has_value())) {
+				return 1;
+			}
+			const std::uint8_t expected_opcode =
+#ifdef _WIN64
+				0xFF;
+#else
+				0xE9;
+#endif
+			const bool jmp_installed =
+				!post_hook_bytes->empty() && post_hook_bytes->front() == expected_opcode;
+			if (!PT::Cli::run_step("Overwrite opcode matches expected JMP", jmp_installed)) {
+				return 1;
+			}
+
+			// (b) Wait, then read the trampoline counter — nonzero means the
+			//     target actually called the hooked function through our
+			//     detour at least once during verify_wait_ms. When
+			//     min_verify_hits is 0 the runtime-firing check is skipped
+			//     entirely (useful for game functions whose call cadence we
+			//     don't know in advance — install-only verification).
+			if (options.min_verify_hits == 0) {
+				PT::Cli::print_named_value(
+					"Runtime-firing check", "skipped (--verify-hits 0)");
+				return 0;
+			}
+			if (options.verify_wait_ms > 0) {
+				Sleep(static_cast<DWORD>(options.verify_wait_ms));
+			}
+			auto counter = PT::HookInjection::read_hit_counter(process, outcome->trampoline_base);
+			if (!PT::Cli::run_step("Read trampoline hit counter", counter.has_value())) {
+				return 1;
+			}
+			PT::Cli::print_named_value("Trampoline hits observed", *counter);
+			const bool hook_fired = *counter >= static_cast<std::uint64_t>(options.min_verify_hits);
+			if (!PT::Cli::run_step(
+					std::format("Hook fired at least {} time(s)", options.min_verify_hits),
+					hook_fired)) {
 				return 1;
 			}
 		}
@@ -480,6 +707,9 @@ int wmain(int argc, wchar_t** argv) {
 	}
 	if (command == L"patch-memory") {
 		return patch_memory(*options);
+	}
+	if (command == L"hook-inline") {
+		return hook_inline(*options);
 	}
 
 	std::wcerr << L"Unknown command: " << command << L'\n';

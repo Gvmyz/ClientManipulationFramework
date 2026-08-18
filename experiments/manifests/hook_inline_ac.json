@@ -1,0 +1,44 @@
+{
+  "name": "hook_inline_ac",
+  "description": "Cross-process inline hook against AssaultCube (32-bit ac_client.exe). Attacker resolves the target function via `--module ac_client.exe --rva <RVA>`, allocates a trampoline near the target, disassembles the target's prologue to pick a natural instruction boundary, fixes up any CALL rel32 operands in the copied prologue, suspends all AC threads, and writes a 5-byte relative JMP over the prologue. Same primitive as hook_inline against TestTarget — this variant validates the fingerprint against a real game process. Recommended target functions (identify RVA via `dumpbin /DISASM ac_client.exe` or IDA/Ghidra): a per-frame handler such as `clientevents`, `updateweapons`, or `execute` (cubescript dispatch, called many times per second). For install-only capture where the specific function's call cadence is unknown, use --verify-hits 0.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 5,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "experiments\\targets\\assaultcube\\bin_win32\\ac_client.exe",
+    "arguments": "--home=. --init --loadmap=ac_desert",
+    "workingDirectory": "experiments\\targets\\assaultcube"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\Win32\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release",
+    "commandLineTemplate": "hook-inline --pid {targetPid} --module ac_client.exe --rva 0xTBD --verify --verify-wait-ms 3000 --verify-hits 0"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "hook_inline_ac",
+    "class": "hook",
+    "variant": "inline",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "ac_client.exe",
+    "extra": {
+      "arch": "x86",
+      "jmp_length": 5,
+      "trampoline_size_bytes": 4096,
+      "target_selection_notes": "Fill in --rva with the RVA of an ac_client.exe function you want to hook. To find a hookable candidate: (1) dumpbin /DISASM path\\to\\ac_client.exe > ac_disasm.txt; (2) search for a per-frame handler (clientevents, updateweapons, execute); (3) subtract the image base (typically 0x00400000 for a 32-bit MSVC/MinGW build) from the function VA to get its RVA. The disassembler auto-picks preserve_bytes so any function with a normal prologue works. --verify-hits 0 accepts install-only capture (some AC functions are only called on specific events).",
+      "expected_fingerprint": "1x ALLOCVM_REMOTE (RWX trampoline, ~4KB, allocated within ±2GB of target for x64 or anywhere for x86), 1x READVM_REMOTE (prologue probe read, 32 bytes), 1x WRITEVM_REMOTE (trampoline write, ~4KB), 1x PROTECTVM_REMOTE (.text → RWX for preserve_bytes bytes), 1x WRITEVM_REMOTE (detour write into .text, 5 bytes + NOP padding), 1x PROTECTVM_REMOTE (.text restore). No THREAD_CREATE_REMOTE."
+    }
+  }
+}

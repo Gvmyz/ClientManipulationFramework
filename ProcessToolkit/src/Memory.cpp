@@ -138,17 +138,17 @@ namespace PT {
 			return ReadProcessMemory(process.get(), reinterpret_cast<LPCVOID>(address), buffer, size, &bytesRead) && bytesRead == size;
 		}
 
-		bool write_memory(const WinHandle& process, std::uintptr_t address, const uintptr_t buffer, std::size_t size) {
+		bool write_memory(const WinHandle& process, std::uintptr_t address, const void* buffer, std::size_t size) {
 			if (!process) return false;
 			SIZE_T bytesWritten = 0;
-			return WriteProcessMemory(process.get(), reinterpret_cast<LPVOID>(address), reinterpret_cast<LPVOID>(buffer), size, &bytesWritten) && bytesWritten == size;
+			return WriteProcessMemory(process.get(), reinterpret_cast<LPVOID>(address), buffer, size, &bytesWritten) && bytesWritten == size;
 		}
 
 		std::optional<std::uintptr_t> allocate_and_write(const WinHandle& process, const void* buffer, std::size_t size, DWORD allocation_type, DWORD protect) {
 			if (!process) return std::nullopt;
 			auto allocated = allocate_memory(process, size, allocation_type, protect);
 			if (!allocated) return std::nullopt;
-			if (!write_memory(process, *allocated, reinterpret_cast<std::uintptr_t>(buffer), size)) {
+			if (!write_memory(process, *allocated, buffer, size)) {
 				free_memory(process, *allocated, size);
 				return std::nullopt;
 			}

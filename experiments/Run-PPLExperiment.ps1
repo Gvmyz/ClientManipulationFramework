@@ -382,11 +382,22 @@ try {
             -Tokens $tokens
         $result.execution.commands.manipulation = ('{0} {1}' -f (Quote-Argument $resolvedManipulationExecutable), $manipulationCommandLine).Trim()
 
+        # Persist the attacker's console output — without redirection Start-Process
+        # opens a transient window that closes on exit, which is why hook-inline
+        # etc. seemed to "flash and disappear." These two files live next to
+        # telemetry.jsonl so post-mortem analysis (or the analysis pipeline itself)
+        # can correlate ETW events with what the attacker actually printed.
+        $manipulationStdoutPath = Join-Path $runDirectory 'manipulation.stdout.log'
+        $manipulationStderrPath = Join-Path $runDirectory 'manipulation.stderr.log'
+
         $manipulationParams = @{
-            FilePath         = $resolvedManipulationExecutable
-            WorkingDirectory = $resolvedManipulationWorkingDirectory
-            PassThru         = $true
-            Wait             = $true
+            FilePath               = $resolvedManipulationExecutable
+            WorkingDirectory       = $resolvedManipulationWorkingDirectory
+            PassThru               = $true
+            Wait                   = $true
+            NoNewWindow            = $true
+            RedirectStandardOutput = $manipulationStdoutPath
+            RedirectStandardError  = $manipulationStderrPath
         }
         if (-not [string]::IsNullOrWhiteSpace($manipulationCommandLine)) {
             $manipulationParams.ArgumentList = $manipulationCommandLine

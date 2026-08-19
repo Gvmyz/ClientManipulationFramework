@@ -651,10 +651,19 @@ namespace {
 	}
 
 	// Scan the target process's WRITABLE committed memory for a byte pattern
-	// and return the absolute address of the first match, or std::nullopt if
-	// nothing matches. Produces one cross-process READVM_REMOTE event per
-	// region we touch — the read-heavy fingerprint that discriminates
-	// AOB-scan (Cheat-Engine's default workflow) from a direct one-shot patch.
+	// and return the absolute address of the FIRST match, or std::nullopt if
+	// nothing matches. Every writable region is read exhaustively even after
+	// the first match is found — this is deliberate:
+	//
+	//   * Cheat Engine's default AOB scan builds a full match list rather
+	//     than stopping early, so the user can iteratively narrow it (edit
+	//     value, rescan, filter). Our tool applies only the first match, but
+	//     the reconnaissance READ workload matches CE's real behavior.
+	//   * Fingerprint-wise, an early-terminating scan bottoms out at 3-5
+	//     READVM_REMOTE events (whichever region contains the first match)
+	//     and gets buried in ambient noise from Windows internals reading
+	//     target memory. Exhaustive scanning produces 30-100+ attacker-
+	//     attributed READVMs that clearly dominate the read-count feature.
 	//
 	// Filters out regions that either can't be safely read OR can't be
 	// written to at their existing protection:
@@ -687,6 +696,8 @@ namespace {
 			PAGE_READWRITE | PAGE_WRITECOPY |
 			PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
 
+		std::optional<std::uintptr_t> first_hit;
+
 		auto regions = PT::Memory::get_memory_infos(process);
 		for (const auto& r : regions) {
 			if (r.state != MEM_COMMIT) continue;
@@ -706,18 +717,20 @@ namespace {
 				continue;
 			}
 
-			// std::search is the linear byte-pattern scan; equivalent to
-			// memmem() where available. Returns end() on no match.
-			auto hit = std::search(
-				buffer.begin(), buffer.end(),
-				pattern.begin(),  pattern.end());
-			if (hit != buffer.end()) {
-				const std::size_t offset =
-					static_cast<std::size_t>(hit - buffer.begin());
-				return r.base_address + offset;
+			// Record the first match but keep scanning — the READVMs we're
+			// about to issue for the remaining regions are the whole point.
+			if (!first_hit) {
+				auto hit = std::search(
+					buffer.begin(), buffer.end(),
+					pattern.begin(),  pattern.end());
+				if (hit != buffer.end()) {
+					const std::size_t offset =
+						static_cast<std::size_t>(hit - buffer.begin());
+					first_hit = r.base_address + offset;
+				}
 			}
 		}
-		return std::nullopt;
+		return first_hit;
 	}
 
 	int patch_aob(const Options& options) {

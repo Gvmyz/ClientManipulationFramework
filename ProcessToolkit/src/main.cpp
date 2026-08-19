@@ -650,17 +650,27 @@ namespace {
 		return 0;
 	}
 
-	// Scan the target process's committed memory for a byte pattern and return
-	// the absolute address of the first match, or std::nullopt if nothing
-	// matches. Produces one cross-process READVM_REMOTE event per region we
-	// touch — the read-heavy fingerprint that discriminates AOB-scan
-	// (Cheat-Engine's default workflow) from a direct one-shot patch.
+	// Scan the target process's WRITABLE committed memory for a byte pattern
+	// and return the absolute address of the first match, or std::nullopt if
+	// nothing matches. Produces one cross-process READVM_REMOTE event per
+	// region we touch — the read-heavy fingerprint that discriminates
+	// AOB-scan (Cheat-Engine's default workflow) from a direct one-shot patch.
 	//
-	// Filters out regions that cannot be safely read: MEM_FREE / MEM_RESERVE,
-	// PAGE_NOACCESS, PAGE_GUARD. Also skips huge regions (>= 128 MB) to keep
-	// the scan bounded on games that mmap large asset files; a real cheat
-	// would target specific writable data segments, but for the baseline we
-	// walk everything under the cutoff.
+	// Filters out regions that either can't be safely read OR can't be
+	// written to at their existing protection:
+	//   * MEM_FREE / MEM_RESERVE — not committed
+	//   * PAGE_NOACCESS / PAGE_GUARD — reads would AV
+	//   * PAGE_EXECUTE / PAGE_READONLY / PAGE_EXECUTE_READ — read-only pages
+	//     (system-DLL .text and .rdata, mapped section views of read-only
+	//     files, immutable image imports). A pattern match here CAN succeed
+	//     — a constant in ntdll happens to be 0x00000258, for instance — but
+	//     the subsequent WriteProcessMemory would fail with ERROR_NOACCESS
+	//     because the page isn't PAGE_*WRITE*. Cheat Engine's default AOB
+	//     scan filters to writable regions for exactly this reason; adding a
+	//     protection-flip variant that scans .text and then RWX-writes is a
+	//     separate technique (patch_alloc / code-cave workflow).
+	// Also skips huge regions (>= 128 MB) to keep the scan bounded on games
+	// that mmap large asset files.
 	std::optional<std::uintptr_t> aob_scan(
 		const WinHandle& process,
 		const std::vector<std::uint8_t>& pattern)
@@ -671,24 +681,28 @@ namespace {
 
 		constexpr std::size_t MAX_REGION_BYTES = 128 * 1024 * 1024;   // 128 MB cutoff
 
+		// The union of every protection class that permits a subsequent
+		// WriteProcessMemory without a preceding VirtualProtectEx.
+		constexpr DWORD WRITABLE_MASK =
+			PAGE_READWRITE | PAGE_WRITECOPY |
+			PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+
 		auto regions = PT::Memory::get_memory_infos(process);
 		for (const auto& r : regions) {
-			// Only committed memory is readable.
 			if (r.state != MEM_COMMIT) continue;
-			// Skip explicitly unreadable protection classes.
 			if (r.protect & PAGE_NOACCESS) continue;
 			if (r.protect & PAGE_GUARD)    continue;
+			if ((r.protect & WRITABLE_MASK) == 0) continue;   // read-only page
 			if (r.region_size == 0)        continue;
 			if (r.region_size > MAX_REGION_BYTES) continue;
-			// Must be at least as large as the pattern to hold a match.
 			if (r.region_size < pattern.size()) continue;
 
 			std::vector<std::uint8_t> buffer(r.region_size);
 			if (!PT::Memory::read_memory(
 					process, r.base_address, buffer.data(), buffer.size())) {
-				// Skipping a region that ReadProcessMemory refused (guard
-				// pages we didn't catch, protected pages, etc.) is expected;
-				// keep scanning rather than aborting on the first failure.
+				// A region that ReadProcessMemory refused (guard pages we
+				// didn't catch, protected pages, etc.) is expected; keep
+				// scanning rather than aborting on the first failure.
 				continue;
 			}
 

@@ -1,0 +1,46 @@
+{
+  "name": "patch_aob_ac",
+  "description": "Cheat-Engine-style Array-of-Bytes (AOB) scan against AssaultCube (32-bit ac_client.exe). Attacker enumerates ac_client.exe's writable committed regions (heap, stack, .data, .bss, allocated buffers — dozens per game process), ReadProcessMemory each one, searches for the ASCII byte sequence `ac_desert` (the currently loaded map name that AC copies into a writable global buffer when startbotmap runs during autostart). On match, does a null-patch (writes the same bytes back) so no game state changes but the WRITEVM_REMOTE event fires. Distinct read-heavy fingerprint vs. every other technique in the corpus: dozens of cross-process READVM_REMOTE events precede a single WRITEVM_REMOTE. No allocation, no protection change, no thread manipulation. Mirrors the canonical Cheat-Engine 'scan for value → edit address' workflow but at signature-level rather than typed-value level.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 15,
+    "cooldownSeconds": 10
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release",
+    "commandLineTemplate": "patch-aob --pid {targetPid} --aob-pattern 61635F64657365727400 --verify"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "patch_aob_ac",
+    "class": "patch",
+    "variant": "aob",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "ac_client.exe",
+    "extra": {
+      "arch": "x86",
+      "pattern_bytes": 10,
+      "pattern_hex": "61635F64657365727400",
+      "pattern_meaning": "ASCII 'ac_desert' + null terminator — the currently loaded map name",
+      "replacement": "null patch (writes same bytes back — no game state change)",
+      "provenance_rationale": "AC's autostart-baseline.cfg calls startbotmap ac_desert on load, so the map name is guaranteed to be present in writable heap/.data buffers by the time the manipulation runs. Cross-referenced against Silme94/Assault-Cube-1.3.0.2-Offsets (2026) for AC's memory-layout conventions.",
+      "expected_fingerprint": "MANY cross-process READVM_REMOTE events (one per writable committed region — for AC typically 30-80 depending on thread count and heap usage), 1x WRITEVM_REMOTE (the null patch, ~10 bytes), 1x READVM_REMOTE (--verify read-back). Notably absent: 0x ALLOCVM_REMOTE, 0x PROTECTVM_REMOTE, 0x THREAD_CREATE_REMOTE, 0x SETTHREADCONTEXT. The read/write ratio (dozens of reads to one write) is the discriminator vs. every other class in the corpus."
+    }
+  }
+}

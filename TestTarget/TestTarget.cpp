@@ -90,6 +90,13 @@ int main() {
 			hello();
 		}
 
-		Sleep(10);
+		// SleepEx(ms, bAlertable=TRUE) instead of plain Sleep so the main
+		// thread hits an alertable wait every ~10ms. Queued user-mode APCs
+		// only fire when the target thread enters an alertable state; without
+		// this, the apc_classic experiment queues a routine that never runs.
+		// Return value is 0 for timeout and WAIT_IO_COMPLETION (192) when an
+		// APC drained during the wait — we ignore it, the loop continues
+		// either way.
+		SleepEx(10, TRUE);
 	}
 }

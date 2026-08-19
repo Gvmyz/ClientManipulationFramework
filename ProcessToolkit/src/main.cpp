@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "ApcInjection.h"
 #include "DllInjection.h"
 #include "HookInjection.h"
 #include "Memory.h"
@@ -46,6 +47,7 @@ namespace {
 		// the detour at least once during verify_wait_ms". Pass 0 to skip the
 		// counter check entirely — useful for hooking game functions whose
 		// call cadence we don't know in advance (e.g. rare AC handlers).
+		// Also honored by apc-inject for the queued-APC counter check.
 		int min_verify_hits{1};
 		// hook-inline: total bytes to overwrite at the target function.
 		// Must be >= the architecture's JMP length (14 x64, 5 x86). 0 means
@@ -73,7 +75,9 @@ namespace {
 			<< L"  " << exe_name << L" hook-inline --pid <pid>\n"
 			<< L"                              (--address <hex> | --module <name> --rva <hex>)\n"
 			<< L"                              [--preserve-bytes <N>] [--verify]\n"
-			<< L"                              [--verify-wait-ms <ms>]\n\n"
+			<< L"                              [--verify-wait-ms <ms>]\n"
+			<< L"  " << exe_name << L" apc-inject --pid <pid> [--verify]\n"
+			<< L"                              [--verify-wait-ms <ms>] [--verify-hits <N>]\n\n"
 			<< L"Examples:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid 1234 --committed --executable\n"
@@ -82,7 +86,8 @@ namespace {
 			<< L"  " << exe_name << L" inject-threadhijack --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
 			<< L"  " << exe_name << L" patch-memory --pid 1234 --address 0x7FF6C0123ABC --bytes 0F270000 --verify\n"
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --address 0x7FF6C0123ABC --verify\n"
-			<< L"  " << exe_name << L" hook-inline --pid 1234 --module ac_client.exe --rva 0x12345 --verify\n";
+			<< L"  " << exe_name << L" hook-inline --pid 1234 --module ac_client.exe --rva 0x12345 --verify\n"
+			<< L"  " << exe_name << L" apc-inject  --pid 1234 --verify --verify-wait-ms 2000\n";
 	}
 
 	std::optional<DWORD> parse_pid(std::wstring_view value) {
@@ -629,6 +634,64 @@ namespace {
 		return 0;
 	}
 
+	int apc_inject(const Options& options) {
+		if (!options.pid) {
+			PT::Cli::print_error("apc-inject requires --pid");
+			return 2;
+		}
+
+		PT::Cli::print_section("Open Target Process");
+		auto process = PT::ProcessMemory::open_process(*options.pid);
+		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
+			return 1;
+		}
+
+		PT::Cli::print_section("Queue User APC");
+
+		auto outcome = PT::ApcInjection::queue_apc(process, *options.pid);
+		if (!PT::Cli::run_step("Allocated + wrote shellcode + queued APC", outcome.has_value())) {
+			return 1;
+		}
+
+		PT::Cli::print_named_hex("Trampoline base", outcome->trampoline_base);
+		PT::Cli::print_named_hex("APC routine addr", outcome->apc_routine_addr);
+		PT::Cli::print_named_hex("Counter addr", outcome->counter_addr);
+		PT::Cli::print_named_value("Target thread ID", outcome->target_thread_id);
+
+		if (options.verify) {
+			PT::Cli::print_section("Verify");
+
+			// APCs are pending until the target thread hits an alertable
+			// wait. TestTarget uses SleepEx(TRUE) every 10ms so we usually
+			// see a hit within the first iteration; give it a generous
+			// window to accommodate slower callers. min_verify_hits==0 lets
+			// the caller skip the runtime-firing check entirely, matching
+			// hook-inline's semantics.
+			if (options.min_verify_hits == 0) {
+				PT::Cli::print_named_value(
+					"Runtime-firing check", "skipped (--verify-hits 0)");
+				return 0;
+			}
+			if (options.verify_wait_ms > 0) {
+				Sleep(static_cast<DWORD>(options.verify_wait_ms));
+			}
+			auto counter = PT::ApcInjection::read_hit_counter(process, outcome->counter_addr);
+			if (!PT::Cli::run_step("Read APC hit counter", counter.has_value())) {
+				return 1;
+			}
+			PT::Cli::print_named_value("APC hits observed", *counter);
+			const bool apc_fired =
+				*counter >= static_cast<std::uint64_t>(options.min_verify_hits);
+			if (!PT::Cli::run_step(
+					std::format("APC fired at least {} time(s)", options.min_verify_hits),
+					apc_fired)) {
+				return 1;
+			}
+		}
+
+		return 0;
+	}
+
 	int inject_manualmap(const Options& options) {
 		if (!options.pid) {
 			PT::Cli::print_error("inject-manualmap requires --pid");
@@ -710,6 +773,9 @@ int wmain(int argc, wchar_t** argv) {
 	}
 	if (command == L"hook-inline") {
 		return hook_inline(*options);
+	}
+	if (command == L"apc-inject") {
+		return apc_inject(*options);
 	}
 
 	std::wcerr << L"Unknown command: " << command << L'\n';

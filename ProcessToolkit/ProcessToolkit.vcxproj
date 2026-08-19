@@ -150,6 +150,7 @@
     <ClCompile Include="external\imgui\imgui_impl_win32.cpp" />
     <ClCompile Include="external\imgui\imgui_tables.cpp" />
     <ClCompile Include="external\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="src\ApcInjection.cpp" />
     <ClCompile Include="src\DllInjection.cpp" />
     <ClCompile Include="src\HookInjection.cpp" />
     <ClCompile Include="src\Injector.cpp" />
@@ -175,6 +176,7 @@
     <ClInclude Include="external\imgui\imstb_rectpack.h" />
     <ClInclude Include="external\imgui\imstb_textedit.h" />
     <ClInclude Include="external\imgui\imstb_truetype.h" />
+    <ClInclude Include="include\ApcInjection.h" />
     <ClInclude Include="include\DllInjection.h" />
     <ClInclude Include="include\HookInjection.h" />
     <ClInclude Include="include\Injector.h" />

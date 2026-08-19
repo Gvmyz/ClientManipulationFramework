@@ -1,0 +1,44 @@
+{
+  "name": "apc_classic",
+  "description": "Cross-process APC injection (MITRE T1055.004): attacker opens the target, allocates a small RWX page, writes a leaf shellcode that atomically increments a hit counter, then calls QueueUserAPC to schedule that shellcode on one of the target's existing threads. The APC drains when the target thread next enters an alertable wait (TestTarget's main loop uses SleepEx(TRUE) for exactly this reason). Shares the alloc+write primitives with manualmap but transfers execution via the APC queue instead of CreateRemoteThread — no new thread is created in the target and no thread's context is modified. Documented as an anti-cheat / EDR evasion technique because detectors anchored on THREAD_CREATE_REMOTE miss it entirely; ETW-TI's kernel-level APC event still catches it.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "apc-inject --pid {targetPid} --verify --verify-wait-ms 2000"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "apc_classic",
+    "class": "injection",
+    "variant": "apc",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "TestTarget.exe",
+    "extra": {
+      "arch": "x64",
+      "trampoline_size_bytes": 4096,
+      "shellcode_bytes": 5,
+      "mitre_technique": "T1055.004",
+      "expected_fingerprint": "1x OpenProcess (attacker → target with hostile mask), 1x OpenThread (attacker → target thread), 1x ALLOCVM_REMOTE (RWX trampoline, ~4KB), 1x WRITEVM_REMOTE (shellcode + zeroed counter, single 4KB write), 1x KERNEL_THREATINT_TASK_QUEUEUSERAPC (or similarly-named APC dispatch event — verify empirically). Notably absent: 0x THREAD_CREATE_REMOTE (unlike LL/MM), 0x SETTHREADCONTEXT (unlike TH). This is the sharpest single case for the thesis's central claim that kernel-level events catch what thread-creation-anchored detectors miss."
+    }
+  }
+}

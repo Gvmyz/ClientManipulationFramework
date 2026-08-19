@@ -1,0 +1,46 @@
+{
+  "name": "patch_tick_ac",
+  "description": "Cheat-Engine-style value freeze against AssaultCube's local player health. Attacker resolves the pointer chain ac_client.exe+0x17E0A8->0xEC (Silme94/AssaultCube-1.3.0.2-Offsets: LocalPlayer struct pointer + Health offset), then writes 100 (int32 = 0x64 0x00 0x00 0x00) into that address 20 times at 50ms intervals. Mirrors the trainer pattern where a value in the CE address list has its 'Active' checkbox on: the game keeps trying to update health (e.g. take damage), and every ~50ms our attacker overwrites it back to full. Distinctive fingerprint vs patch_direct: 20 WRITEVMs over ~1s → write_rate_hz ≈ 20. Each write does a fresh pointer-chain resolve that only reads the player-struct pointer once and reuses the resolved address across ticks (one read per resolve × one resolve at start). Safe target: freezing at 100 keeps the player alive in the bot match without invalid-state crashes.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 15,
+    "cooldownSeconds": 10
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release",
+    "commandLineTemplate": "patch-memory --pid {targetPid} --pointer-chain ac_client.exe+0x17E0A8->0xEC --bytes 64000000 --tick-count 20 --tick-interval-ms 50 --verify"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "patch_tick_ac",
+    "class": "patch",
+    "variant": "tick",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "ac_client.exe",
+    "extra": {
+      "arch": "x86",
+      "tick_count": 20,
+      "tick_interval_ms": 50,
+      "pointer_chain": "ac_client.exe+0x17E0A8->0xEC",
+      "pointer_chain_meaning": "AC 1.3.0.2 local player struct base pointer (Silme94 offsets) + Health field at struct offset 0xEC",
+      "frozen_value": "100 (int32, little-endian 64 00 00 00) — full health, safe to freeze in bot match",
+      "expected_fingerprint": "1x cross-process READVM_REMOTE (single pointer-chain resolve reads the player struct pointer once), 20x cross-process WRITEVM_REMOTE (each tick), all with the same base_address (resolved health field). write_span_seconds ≈ 0.95, write_rate_hz ≈ 20, distinct_write_targets == 1. Notably absent: 0x ALLOCVM, 0x PROTECTVM, 0x THREAD_CREATE_REMOTE, 0x SETTHREADCONTEXT. Discriminator vs patch_aob_ac: dominated by writes not reads; vs memorypatch: 20× the write count and nonzero write_rate_hz."
+    }
+  }
+}

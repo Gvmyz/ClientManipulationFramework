@@ -65,6 +65,15 @@ namespace {
 		// then the classic patch-memory write path uses --bytes to overwrite
 		// (or the same pattern if --bytes is omitted).
 		std::optional<std::vector<std::uint8_t>> aob_pattern;
+		// patch-memory: Cheat-Engine-style pointer chain resolver. Syntax:
+		//   "<module>+<hex-offset>[->hex-offset[->hex-offset...]]"
+		// Examples:
+		//   ac_client.exe+0x17E0A8           — static address (no dereference)
+		//   ac_client.exe+0x17E0A8->0xEC     — one dereference + final offset
+		//                                       (AC's local player health)
+		// When present, this overrides --address: the tool resolves the chain
+		// at runtime and uses the result as the write target.
+		std::optional<std::wstring> pointer_chain;
 	};
 
 	void print_usage(const wchar_t* exe_name) {
@@ -75,7 +84,9 @@ namespace {
 			<< L"  " << exe_name << L" inject-loadlibrary --pid <pid> --dll <path> [--module <name>] [--call <export>]\n"
 			<< L"  " << exe_name << L" inject-manualmap --pid <pid> --dll <path> [--call <export>]\n"
 			<< L"  " << exe_name << L" inject-threadhijack --pid <pid> --dll <path> [--module <name>] [--call <export>]\n"
-			<< L"  " << exe_name << L" patch-memory --pid <pid> --address <hex> --bytes <hex>\n"
+			<< L"  " << exe_name << L" patch-memory --pid <pid>\n"
+			<< L"                              (--address <hex> | --pointer-chain <spec>)\n"
+			<< L"                              --bytes <hex>\n"
 			<< L"                              [--restore-protection] [--verify]\n"
 			<< L"                              [--tick-count <N>] [--tick-interval-ms <ms>]\n"
 			<< L"  " << exe_name << L" hook-inline --pid <pid>\n"
@@ -93,6 +104,7 @@ namespace {
 			<< L"  " << exe_name << L" inject-manualmap --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
 			<< L"  " << exe_name << L" inject-threadhijack --pid 1234 --dll C:\\path\\TestDll.dll --call RunTest\n"
 			<< L"  " << exe_name << L" patch-memory --pid 1234 --address 0x7FF6C0123ABC --bytes 0F270000 --verify\n"
+			<< L"  " << exe_name << L" patch-memory --pid 1234 --pointer-chain ac_client.exe+0x17E0A8->0xEC --bytes 64000000 --tick-count 20 --tick-interval-ms 50\n"
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --address 0x7FF6C0123ABC --verify\n"
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --module ac_client.exe --rva 0x12345 --verify\n"
 			<< L"  " << exe_name << L" apc-inject  --pid 1234 --verify --verify-wait-ms 2000\n"
@@ -115,6 +127,12 @@ namespace {
 	}
 
 	// Parse a hex virtual address. Accepts "0x..." or bare hex digits.
+	// Forward declarations for helpers defined later in this file. The
+	// patch-memory handler calls resolve_pointer_chain, which sits alongside
+	// aob_scan below the injection handlers for locality with its consumer.
+	std::optional<std::uintptr_t> resolve_pointer_chain(
+		const WinHandle& process, std::wstring_view spec);
+
 	std::optional<std::uintptr_t> parse_hex_address(std::wstring_view value) {
 		if (value.size() > 2 && (value.starts_with(L"0x") || value.starts_with(L"0X"))) {
 			value.remove_prefix(2);
@@ -277,6 +295,8 @@ namespace {
 					return std::nullopt;
 				}
 				options.rva = *rva;
+			} else if (arg == L"--pointer-chain" && i + 1 < argc) {
+				options.pointer_chain = argv[++i];
 			} else if (arg == L"--aob-pattern" && i + 1 < argc) {
 				auto pattern = parse_hex_bytes(argv[++i]);
 				if (!pattern || pattern->empty()) {
@@ -467,8 +487,8 @@ namespace {
 			PT::Cli::print_error("patch-memory requires --pid");
 			return 2;
 		}
-		if (!options.address) {
-			PT::Cli::print_error("patch-memory requires --address");
+		if (!options.address && !options.pointer_chain) {
+			PT::Cli::print_error("patch-memory requires --address or --pointer-chain");
 			return 2;
 		}
 		if (!options.bytes || options.bytes->empty()) {
@@ -483,8 +503,27 @@ namespace {
 			return 1;
 		}
 
+		// Resolve the target address. --pointer-chain takes precedence over
+		// --address; the chain resolver does its own module lookup + one
+		// dereference per arrow in the spec, then produces the final VA that
+		// the write loop below hits.
+		std::uintptr_t target_addr = 0;
+		if (options.pointer_chain) {
+			PT::Cli::print_section("Resolve Pointer Chain");
+			PT::Cli::print_named_value("Chain spec length (chars)",
+				options.pointer_chain->size());
+			auto resolved = resolve_pointer_chain(process, *options.pointer_chain);
+			if (!PT::Cli::run_step("Resolved pointer chain", resolved.has_value())) {
+				return 1;
+			}
+			PT::Cli::print_named_hex("Resolved target address", *resolved);
+			target_addr = *resolved;
+		} else {
+			target_addr = *options.address;
+		}
+
 		PT::Cli::print_section("Patch Memory");
-		PT::Cli::print_named_hex("Target address", *options.address);
+		PT::Cli::print_named_hex("Target address", target_addr);
 		PT::Cli::print_named_value("Bytes to write", options.bytes->size());
 		PT::Cli::print_named_value(
 			"Toggle protection (RWX during write)",
@@ -507,7 +546,7 @@ namespace {
 				Sleep(static_cast<DWORD>(options.tick_interval_ms));
 			}
 			auto outcome = PT::MemoryPatch::patch_bytes(
-				process, *options.address, *options.bytes, options.restore_protection);
+				process, target_addr, *options.bytes, options.restore_protection);
 			if (!outcome.has_value()) {
 				PT::Cli::run_step(
 					std::format("Wrote bytes to remote memory (tick {}/{})",
@@ -534,7 +573,7 @@ namespace {
 		if (options.verify) {
 			PT::Cli::print_section("Verify");
 			auto read_back = PT::MemoryPatch::read_bytes(
-				process, *options.address, options.bytes->size());
+				process, target_addr, options.bytes->size());
 			if (!PT::Cli::run_step("Read bytes back from target", read_back.has_value())) {
 				return 1;
 			}
@@ -648,6 +687,87 @@ namespace {
 		}
 
 		return 0;
+	}
+
+	// Resolve a Cheat-Engine-style pointer chain in the target process.
+	// Syntax: "<module>+<hex-offset>[->hex-offset[->hex-offset...]]"
+	//
+	// For a chain like `M+A -> B -> C`:
+	//   addr = module_base(M) + A
+	//   for each further offset (B, C, ...):
+	//       ptr = ReadProcessMemory(addr, sizeof(void*))   // dereference
+	//       addr = ptr + offset
+	//   return addr
+	//
+	// A chain with zero arrows (`M+A`) returns module_base(M) + A directly
+	// — equivalent to --address but easier to spec across builds that
+	// relocate the module image (ASLR-aware; AC 1.3.0.2 loads at its
+	// preferred base so this doesn't matter here, but future targets may).
+	//
+	// The dereferenced pointer size follows the attacker's architecture:
+	// std::uintptr_t is 8 bytes on x64 and 4 bytes on x86, which matches
+	// the target's architecture in every experiment we run (same-arch
+	// attacker/target). Cross-arch pointer chains would need explicit
+	// width handling; out of scope for the current corpus.
+	std::optional<std::uintptr_t> resolve_pointer_chain(
+		const WinHandle& process, std::wstring_view spec)
+	{
+		if (!process || spec.empty()) return std::nullopt;
+
+		// Split on "->" to separate the module+base-offset token from any
+		// dereferenceable offsets.
+		std::vector<std::wstring_view> tokens;
+		{
+			std::size_t start = 0;
+			while (start <= spec.size()) {
+				const auto sep = spec.find(L"->", start);
+				if (sep == std::wstring_view::npos) {
+					tokens.push_back(spec.substr(start));
+					break;
+				}
+				tokens.push_back(spec.substr(start, sep - start));
+				start = sep + 2;   // skip "->"
+			}
+		}
+		if (tokens.empty()) return std::nullopt;
+
+		// First token: "<module>+<hex-offset>"
+		const auto& first = tokens[0];
+		const auto plus_pos = first.find(L'+');
+		if (plus_pos == std::wstring_view::npos) {
+			PT::Cli::print_error("--pointer-chain must start with '<module>+<hex-offset>'");
+			return std::nullopt;
+		}
+		const std::wstring module_name{first.substr(0, plus_pos)};
+		auto base_off = parse_hex_address(first.substr(plus_pos + 1));
+		if (!base_off) {
+			PT::Cli::print_error("--pointer-chain: invalid base offset in first token");
+			return std::nullopt;
+		}
+
+		auto module_base = PT::Memory::find_module_base(process, module_name);
+		if (!module_base) {
+			PT::Cli::print_error("--pointer-chain: could not resolve module base");
+			return std::nullopt;
+		}
+
+		std::uintptr_t addr = *module_base + *base_off;
+
+		// Each subsequent token: dereference `addr`, then add the offset.
+		for (std::size_t i = 1; i < tokens.size(); ++i) {
+			auto off = parse_hex_address(tokens[i]);
+			if (!off) {
+				PT::Cli::print_error("--pointer-chain: invalid offset in chain");
+				return std::nullopt;
+			}
+			std::uintptr_t next_ptr = 0;
+			if (!PT::Memory::read_trivial_memory(process, addr, next_ptr)) {
+				PT::Cli::print_error("--pointer-chain: dereference read failed (bad pointer or unreadable)");
+				return std::nullopt;
+			}
+			addr = next_ptr + *off;
+		}
+		return addr;
 	}
 
 	// Scan the target process's WRITABLE committed memory for a byte pattern

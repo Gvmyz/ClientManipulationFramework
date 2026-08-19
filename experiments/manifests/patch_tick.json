@@ -1,6 +1,6 @@
 {
   "name": "patch_tick",
-  "description": "Cheat-Engine-style value freeze: 20 WriteProcessMemory writes at 50ms intervals against TestTarget's `value` variable. Simulates a trainer that continuously restamps a game state to a target value. The fingerprint is a burst of ~20 WRITEVM_REMOTE events over ~1 second, distinguishing this pattern from a single one-shot write.",
+  "description": "Cheat-Engine-style value freeze: the attacker repeatedly writes the same bytes to the same target address at a fixed interval, mimicking the trainer pattern where the 'Active' checkbox next to a value in the CE address list keeps that value pinned even as the game tries to update it. Uses the existing patch-memory verb with --tick-count 20 --tick-interval-ms 50 so a full freeze burst takes about 1 second and produces exactly 20 WRITEVM_REMOTE events to the same base_address. Distinct temporal signature vs patch_direct (single write): write_span_seconds > 0, write_rate_hz ≈ 20, cross_process_write_count == 20. Same target address as memorypatch — TestTarget's `value` variable — so the base fingerprint is identical to patch_direct scaled by the tick count.",
   "providers": [
     { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
     { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
@@ -34,9 +34,13 @@
     "evasion": null,
     "target": "TestTarget.exe",
     "extra": {
+      "arch": "x64",
       "tick_count": 20,
       "tick_interval_ms": 50,
-      "notes": "20 ticks × 50ms = 1s of writes, then verify. Expected fingerprint delta vs patch_direct: threatint_cross_process_write_count ≈ 20 (vs 1 for direct). Total ETW-TI event count increases proportionally. No protection changes (no --restore-protection), so threatint_remote_protect_observed stays False."
+      "burst_duration_ms_approx": 1000,
+      "target_value_initial": 600,
+      "target_value_frozen": 9999,
+      "expected_fingerprint": "20x cross-process WRITEVM_REMOTE events, all with base_address == TestTarget's `value` addr, spaced ~50ms apart → write_span_seconds ≈ 0.95, write_rate_hz ≈ 20. Notably absent: 0x ALLOCVM, 0x PROTECTVM, 0x READVM_REMOTE (verify uses read only at the end), 0x THREAD_CREATE_REMOTE. Discriminator vs patch_direct: write_count = 20 (vs 1); vs patch_aob: no read burst; vs everything else: dominant WRITEVM count with distinct_write_targets == 1 (same address hit repeatedly)."
     }
   }
 }

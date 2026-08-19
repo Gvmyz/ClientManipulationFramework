@@ -1,0 +1,46 @@
+{
+  "name": "patch_aob",
+  "description": "Cheat-Engine-style Array-of-Bytes (AOB) scan followed by a one-shot memory patch. Attacker enumerates the target's committed memory regions, ReadProcessMemory each one, searches for a byte pattern locally, and only writes to the first match. Distinctive fingerprint vs. patch_direct: the scan produces many cross-process READVM_REMOTE events (one per region touched — typically dozens for a game process) before a single WRITEVM_REMOTE. This is the canonical Cheat-Engine workflow: 'Scan for value → filter → add to address list → edit'. No allocation, no protection change, no thread manipulation — just read-heavy reconnaissance followed by one direct write.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "patch-aob --pid {targetPid} --aob-pattern 58020000 --bytes 0F270000 --verify"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "patch_aob",
+    "class": "patch",
+    "variant": "aob",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "TestTarget.exe",
+    "extra": {
+      "arch": "x64",
+      "pattern_bytes": 4,
+      "pattern_hex": "58020000",
+      "pattern_meaning": "int32 = 600 (little-endian) — TestTarget's initial `value` variable",
+      "replacement_hex": "0F270000",
+      "replacement_meaning": "int32 = 9999 (little-endian)",
+      "expected_fingerprint": "MANY cross-process READVM_REMOTE events (one per committed memory region scanned in the target — count depends on target's VAD layout, typically 30-100+ for a real game), 1x WRITEVM_REMOTE (the actual patch after the pattern is located), 1x READVM_REMOTE (the --verify read-back). Notably absent: 0x ALLOCVM_REMOTE, 0x PROTECTVM_REMOTE, 0x THREAD_CREATE_REMOTE, 0x SETTHREADCONTEXT. The read/write ratio is the discriminator vs. all other techniques in the corpus."
+    }
+  }
+}

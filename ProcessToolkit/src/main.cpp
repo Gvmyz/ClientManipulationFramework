@@ -59,6 +59,12 @@ namespace {
 		// function whose RVA came from disassembly. --address takes precedence
 		// if both forms are supplied.
 		std::optional<std::uintptr_t> rva;
+		// patch-aob: byte pattern (as hex, no wildcards for the baseline) to
+		// scan for across the target's committed memory before doing the
+		// write. Reused across --bytes semantics: the scan finds the address,
+		// then the classic patch-memory write path uses --bytes to overwrite
+		// (or the same pattern if --bytes is omitted).
+		std::optional<std::vector<std::uint8_t>> aob_pattern;
 	};
 
 	void print_usage(const wchar_t* exe_name) {
@@ -77,7 +83,9 @@ namespace {
 			<< L"                              [--preserve-bytes <N>] [--verify]\n"
 			<< L"                              [--verify-wait-ms <ms>]\n"
 			<< L"  " << exe_name << L" apc-inject --pid <pid> [--verify]\n"
-			<< L"                              [--verify-wait-ms <ms>] [--verify-hits <N>]\n\n"
+			<< L"                              [--verify-wait-ms <ms>] [--verify-hits <N>]\n"
+			<< L"  " << exe_name << L" patch-aob --pid <pid> --aob-pattern <hex>\n"
+			<< L"                              [--bytes <hex>] [--restore-protection] [--verify]\n\n"
 			<< L"Examples:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid 1234 --committed --executable\n"
@@ -87,7 +95,8 @@ namespace {
 			<< L"  " << exe_name << L" patch-memory --pid 1234 --address 0x7FF6C0123ABC --bytes 0F270000 --verify\n"
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --address 0x7FF6C0123ABC --verify\n"
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --module ac_client.exe --rva 0x12345 --verify\n"
-			<< L"  " << exe_name << L" apc-inject  --pid 1234 --verify --verify-wait-ms 2000\n";
+			<< L"  " << exe_name << L" apc-inject  --pid 1234 --verify --verify-wait-ms 2000\n"
+			<< L"  " << exe_name << L" patch-aob   --pid 1234 --aob-pattern 58020000 --bytes 0F270000 --verify\n";
 	}
 
 	std::optional<DWORD> parse_pid(std::wstring_view value) {
@@ -268,6 +277,13 @@ namespace {
 					return std::nullopt;
 				}
 				options.rva = *rva;
+			} else if (arg == L"--aob-pattern" && i + 1 < argc) {
+				auto pattern = parse_hex_bytes(argv[++i]);
+				if (!pattern || pattern->empty()) {
+					PT::Cli::print_error("Invalid --aob-pattern value (expected even-length hex string, e.g. 58020000)");
+					return std::nullopt;
+				}
+				options.aob_pattern = std::move(*pattern);
 			} else if (arg == L"--verify-hits" && i + 1 < argc) {
 				try {
 					options.min_verify_hits = std::stoi(argv[++i]);
@@ -634,6 +650,127 @@ namespace {
 		return 0;
 	}
 
+	// Scan the target process's committed memory for a byte pattern and return
+	// the absolute address of the first match, or std::nullopt if nothing
+	// matches. Produces one cross-process READVM_REMOTE event per region we
+	// touch — the read-heavy fingerprint that discriminates AOB-scan
+	// (Cheat-Engine's default workflow) from a direct one-shot patch.
+	//
+	// Filters out regions that cannot be safely read: MEM_FREE / MEM_RESERVE,
+	// PAGE_NOACCESS, PAGE_GUARD. Also skips huge regions (>= 128 MB) to keep
+	// the scan bounded on games that mmap large asset files; a real cheat
+	// would target specific writable data segments, but for the baseline we
+	// walk everything under the cutoff.
+	std::optional<std::uintptr_t> aob_scan(
+		const WinHandle& process,
+		const std::vector<std::uint8_t>& pattern)
+	{
+		if (!process || pattern.empty()) {
+			return std::nullopt;
+		}
+
+		constexpr std::size_t MAX_REGION_BYTES = 128 * 1024 * 1024;   // 128 MB cutoff
+
+		auto regions = PT::Memory::get_memory_infos(process);
+		for (const auto& r : regions) {
+			// Only committed memory is readable.
+			if (r.state != MEM_COMMIT) continue;
+			// Skip explicitly unreadable protection classes.
+			if (r.protect & PAGE_NOACCESS) continue;
+			if (r.protect & PAGE_GUARD)    continue;
+			if (r.region_size == 0)        continue;
+			if (r.region_size > MAX_REGION_BYTES) continue;
+			// Must be at least as large as the pattern to hold a match.
+			if (r.region_size < pattern.size()) continue;
+
+			std::vector<std::uint8_t> buffer(r.region_size);
+			if (!PT::Memory::read_memory(
+					process, r.base_address, buffer.data(), buffer.size())) {
+				// Skipping a region that ReadProcessMemory refused (guard
+				// pages we didn't catch, protected pages, etc.) is expected;
+				// keep scanning rather than aborting on the first failure.
+				continue;
+			}
+
+			// std::search is the linear byte-pattern scan; equivalent to
+			// memmem() where available. Returns end() on no match.
+			auto hit = std::search(
+				buffer.begin(), buffer.end(),
+				pattern.begin(),  pattern.end());
+			if (hit != buffer.end()) {
+				const std::size_t offset =
+					static_cast<std::size_t>(hit - buffer.begin());
+				return r.base_address + offset;
+			}
+		}
+		return std::nullopt;
+	}
+
+	int patch_aob(const Options& options) {
+		if (!options.pid) {
+			PT::Cli::print_error("patch-aob requires --pid");
+			return 2;
+		}
+		if (!options.aob_pattern || options.aob_pattern->empty()) {
+			PT::Cli::print_error("patch-aob requires --aob-pattern");
+			return 2;
+		}
+		// The replacement bytes default to the pattern itself if --bytes is
+		// omitted (writes the same value back — the null patch, useful for
+		// dry runs where we only want to characterize the read/write pattern
+		// without changing target state). Most real invocations pass --bytes.
+		const auto& write_bytes = options.bytes.value_or(*options.aob_pattern);
+		if (write_bytes.empty()) {
+			PT::Cli::print_error("patch-aob requires --bytes (or defaults to --aob-pattern; both empty)");
+			return 2;
+		}
+
+		PT::Cli::print_section("Open Target Process");
+		auto process = PT::ProcessMemory::open_process_memory_only(
+			*options.pid, options.verify);
+		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
+			return 1;
+		}
+
+		PT::Cli::print_section("AOB Scan");
+		PT::Cli::print_named_value("Pattern length (bytes)", options.aob_pattern->size());
+
+		auto hit_addr = aob_scan(process, *options.aob_pattern);
+		if (!PT::Cli::run_step("Found pattern in target memory", hit_addr.has_value())) {
+			return 1;
+		}
+		PT::Cli::print_named_hex("First match address", *hit_addr);
+
+		PT::Cli::print_section("Patch Memory");
+		PT::Cli::print_named_hex("Target address", *hit_addr);
+		PT::Cli::print_named_value("Bytes to write", write_bytes.size());
+		PT::Cli::print_named_value(
+			"Toggle protection (RWX during write)",
+			options.restore_protection ? "yes" : "no");
+
+		auto outcome = PT::MemoryPatch::patch_bytes(
+			process, *hit_addr, write_bytes, options.restore_protection);
+		if (!PT::Cli::run_step("Wrote bytes to remote memory", outcome.has_value())) {
+			return 1;
+		}
+		PT::Cli::print_named_value("Bytes written", outcome->bytes_written);
+
+		if (options.verify) {
+			PT::Cli::print_section("Verify");
+			auto read_back = PT::MemoryPatch::read_bytes(
+				process, *hit_addr, write_bytes.size());
+			if (!PT::Cli::run_step("Read bytes back from target", read_back.has_value())) {
+				return 1;
+			}
+			const bool match = (*read_back == write_bytes);
+			if (!PT::Cli::run_step("Read-back matches requested patch", match)) {
+				return 1;
+			}
+		}
+
+		return 0;
+	}
+
 	int apc_inject(const Options& options) {
 		if (!options.pid) {
 			PT::Cli::print_error("apc-inject requires --pid");
@@ -776,6 +913,9 @@ int wmain(int argc, wchar_t** argv) {
 	}
 	if (command == L"apc-inject") {
 		return apc_inject(*options);
+	}
+	if (command == L"patch-aob") {
+		return patch_aob(*options);
 	}
 
 	std::wcerr << L"Unknown command: " << command << L'\n';

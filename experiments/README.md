@@ -16,7 +16,7 @@ This folder contains small orchestration assets for thesis runs.
 4. Run the manipulation command.
 5. Wait for cooldown.
 6. Stop telemetry.
-7. Write `manifest.json` for the run.
+7. Write `manifest.json` for the run. 
 
 ## Usage
 

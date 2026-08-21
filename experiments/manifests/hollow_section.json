@@ -1,0 +1,45 @@
+{
+  "name": "hollow_section",
+  "description": "Section-Mapped Process Hollowing — an advanced injection technique combining T1055.012 (process hollowing) with T1055 section-mapping delivery. Attacker launches a fresh TestTarget process CREATE_SUSPENDED, creates a shared RWX section, maps it into its own address space (locally writes shellcode), then maps the same section into the suspended victim (fires KERNEL_THREATINT_TASK_MAPVIEW cross-process — no VirtualAllocEx or WriteProcessMemory needed), redirects the victim's main thread RIP to the shellcode via SetThreadContext (fires KERNEL_THREATINT_TASK_SETTHREADCONTEXT cross-process), then ResumeThread. The shellcode atomically increments a counter (shared across attacker and victim via the section's shared physical pages) and infinite-loops. Attacker verifies via LOCAL read of its own view (physically shared, no cross-process read needed) then terminates the victim. This is a REAL documented advanced malware technique (Doppelgänging-family without transactions, or 'Herpaderping'-adjacent) and exercises BOTH the new section-mapping detection rule AND the pre-existing thread-hijack rule — demonstrating cascade ordering correctly picks the more-specific section-mapping label.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "inject-hollow-section --victim-exe ProcessToolkit\\x64\\Release\\TestTarget.exe --verify --verify-wait-ms 1500"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "hollow_section",
+    "class": "injection",
+    "variant": "section_mapping",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "TestTarget.exe",
+    "extra": {
+      "arch": "x64",
+      "mitre_technique": "T1055.012 (Hollowing) + T1055 section-mapping variant",
+      "section_size_bytes": 4096,
+      "shellcode_size_bytes": 10,
+      "victim_launched_by_attacker": true,
+      "expected_fingerprint": "1x MAPVIEW_REMOTE (attacker maps shared section into victim's address space — THE key cross-process event of section-based delivery), 1x SETTHREADCONTEXT_REMOTE (RIP redirect to shellcode entry), 1x CreateProcess (KernelProcess provider — victim is a fresh process launched by the attacker in CREATE_SUSPENDED). Notably absent: 0x ALLOCVM_REMOTE (no VirtualAllocEx — shared section delivery replaces it), 0x WRITEVM_REMOTE (no WriteProcessMemory — shared physical pages replace it), 0x THREAD_CREATE_REMOTE (no CreateRemoteThread — victim's own main thread runs the payload). Expected classifier verdict: injection.section_mapping via section_mapping.ti_mapview rule (fires at cascade position 1). This tests: (a) that the new MAPVIEW detector fires on real data, (b) that the section_mapping rule wins the cascade over the also-matching thread_hijack rule, (c) that the classifier correctly labels the DELIVERY primitive (section mapping) rather than the TRIGGER primitive (thread hijack)."
+    }
+  }
+}

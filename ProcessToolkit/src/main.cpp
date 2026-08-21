@@ -18,6 +18,7 @@
 #include "MemoryPatch.h"
 #include "Process.h"
 #include "ProcessMemory.h"
+#include "SectionInjection.h"
 #include "Utils.h"
 
 namespace {
@@ -59,6 +60,9 @@ namespace {
 		// function whose RVA came from disassembly. --address takes precedence
 		// if both forms are supplied.
 		std::optional<std::uintptr_t> rva;
+		// inject-hollow-section: full path to the victim executable that will
+		// be launched CREATE_SUSPENDED and hollowed via a shared section map.
+		std::optional<std::wstring> victim_exe;
 		// patch-aob: byte pattern (as hex, no wildcards for the baseline) to
 		// scan for across the target's committed memory before doing the
 		// write. Reused across --bytes semantics: the scan finds the address,
@@ -95,6 +99,8 @@ namespace {
 			<< L"                              [--verify-wait-ms <ms>]\n"
 			<< L"  " << exe_name << L" apc-inject --pid <pid> [--verify]\n"
 			<< L"                              [--verify-wait-ms <ms>] [--verify-hits <N>]\n"
+			<< L"  " << exe_name << L" inject-hollow-section --victim-exe <path> [--verify]\n"
+			<< L"                              [--verify-wait-ms <ms>]\n"
 			<< L"  " << exe_name << L" patch-aob --pid <pid> --aob-pattern <hex>\n"
 			<< L"                              [--bytes <hex>] [--restore-protection] [--verify]\n\n"
 			<< L"Examples:\n"
@@ -288,6 +294,8 @@ namespace {
 					PT::Cli::print_error("Invalid --preserve-bytes value (expected integer >= 0)");
 					return std::nullopt;
 				}
+			} else if (arg == L"--victim-exe" && i + 1 < argc) {
+				options.victim_exe = argv[++i];
 			} else if (arg == L"--rva" && i + 1 < argc) {
 				auto rva = parse_hex_address(argv[++i]);
 				if (!rva) {
@@ -918,6 +926,69 @@ namespace {
 		return 0;
 	}
 
+	int inject_hollow_section(const Options& options) {
+		if (!options.victim_exe || options.victim_exe->empty()) {
+			PT::Cli::print_error("inject-hollow-section requires --victim-exe <path>");
+			return 2;
+		}
+
+		PT::Cli::print_section("Launch Victim (CREATE_SUSPENDED) + Section Hollow");
+		std::wcout << L"[*] Victim: " << *options.victim_exe << L'\n';
+
+		auto outcome = PT::SectionInjection::install_section_mapped_hollowing(*options.victim_exe);
+		if (!PT::Cli::run_step("Installed section-mapped hollowing", outcome.has_value())) {
+			return 1;
+		}
+
+		PT::Cli::print_named_value("Victim PID",             outcome->victim_pid);
+		PT::Cli::print_named_value("Victim main thread ID",  outcome->victim_thread_id);
+		PT::Cli::print_named_hex("Attacker-local view base",  outcome->local_view_base);
+		PT::Cli::print_named_hex("Victim-remote view base",   outcome->remote_view_base);
+		PT::Cli::print_named_value("Section size (bytes)",    outcome->section_size);
+		PT::Cli::print_named_hex("Counter address (local)",   outcome->local_view_base  + outcome->counter_offset);
+		PT::Cli::print_named_hex("Shellcode entry (remote)",  outcome->remote_view_base + outcome->shellcode_offset);
+
+		// Retrieve the victim handles so we can terminate cleanly after verify.
+		HANDLE victim_process = PT::SectionInjection::take_last_victim_process_handle();
+		HANDLE victim_thread  = PT::SectionInjection::take_last_victim_thread_handle();
+
+		int rc = 0;
+		if (options.verify) {
+			PT::Cli::print_section("Verify");
+
+			// The shellcode runs at victim's mapped section base + shellcode
+			// offset, does `lock inc [counter]; jmp $`. Verification is a
+			// LOCAL read from our own view of the section — the shared
+			// physical pages make the victim's increment immediately visible.
+			if (options.verify_wait_ms > 0) {
+				Sleep(static_cast<DWORD>(options.verify_wait_ms));
+			}
+			const std::uint64_t hits =
+				PT::SectionInjection::read_hit_counter_local(outcome->local_view_base);
+			PT::Cli::run_step("Read hit counter from local view",
+							  true /* memcpy from own view can't fail meaningfully */);
+			PT::Cli::print_named_value("Section hits observed", hits);
+
+			// Windows.h defines `max` as a macro which collides with std::max
+			// inside std::format — compute the threshold out-of-line.
+			const int min_hits =
+				(options.min_verify_hits < 1) ? 1 : options.min_verify_hits;
+			const bool ok = hits >= static_cast<std::uint64_t>(min_hits);
+			if (!PT::Cli::run_step(
+					std::format("Shellcode fired at least {} time(s)", min_hits),
+					ok)) {
+				rc = 1;
+			}
+		}
+
+		// Always clean up the victim — it's currently spinning in `jmp $`.
+		PT::Cli::print_section("Cleanup");
+		PT::SectionInjection::cleanup(*outcome, victim_process, victim_thread);
+		PT::Cli::run_step("Terminated victim + unmapped local view", true);
+
+		return rc;
+	}
+
 	int apc_inject(const Options& options) {
 		if (!options.pid) {
 			PT::Cli::print_error("apc-inject requires --pid");
@@ -1060,6 +1131,9 @@ int wmain(int argc, wchar_t** argv) {
 	}
 	if (command == L"apc-inject") {
 		return apc_inject(*options);
+	}
+	if (command == L"inject-hollow-section") {
+		return inject_hollow_section(*options);
 	}
 	if (command == L"patch-aob") {
 		return patch_aob(*options);

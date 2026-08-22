@@ -12,9 +12,9 @@
     "cooldownSeconds": 5
   },
   "target": {
-    "executable": "experiments\\targets\\assaultcube\\bin_win32\\ac_client.exe",
-    "arguments": "--home=. --init --loadmap=ac_desert",
-    "workingDirectory": "experiments\\targets\\assaultcube"
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
   },
   "telemetry": {
     "executable": "ProcessToolkit\\Win32\\Release\\Telemetry.exe",

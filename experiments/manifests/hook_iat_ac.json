@@ -23,7 +23,7 @@
   "manipulation": {
     "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
     "workingDirectory": "ProcessToolkit\\Win32\\Release",
-    "commandLineTemplate": "hook-iat --pid {targetPid} --module kernel32.dll --call Sleep --verify --verify-wait-ms 3000 --verify-hits 0"
+    "commandLineTemplate": "hook-iat --pid {targetPid} --module user32.dll --call PeekMessageA --verify --verify-wait-ms 3000 --verify-hits 0"
   },
   "metadata": {
     "label": "attack",
@@ -35,11 +35,11 @@
     "target": "ac_client.exe",
     "extra": {
       "arch": "x86",
-      "import_module": "kernel32.dll",
-      "import_function": "Sleep",
+      "import_module": "user32.dll",
+      "import_function": "PeekMessageA",
       "iat_slot_bytes": 4,
       "trampoline_size_bytes": 4096,
-      "target_selection_notes": "kernel32.dll!Sleep is used by SDL 1.2 for frame pacing and is imported by ac_client.exe. Original attempt targeted user32.dll!GetAsyncKeyState but AC uses the Win32 message loop (PeekMessageA + WM_KEYDOWN) for input rather than polling GetAsyncKeyState, so that import isn't present. --verify-hits 0 skips the runtime-firing counter check because AC's Sleep call cadence depends on frame rate — install-only verification suffices for the fingerprint capture. Use `ProcessToolkit.exe list-imports --pid <ac_pid>` to enumerate ac_client's actual imports when picking new targets.",
+      "target_selection_notes": "user32.dll!PeekMessageA is the standard Win32 message-pump call, invoked every frame at 60+ Hz by any game that owns its own message loop. First attempt: user32.dll!GetAsyncKeyState — not imported (AC gets input via WM_KEYDOWN messages, not polling). Second attempt: kernel32.dll!Sleep — also not imported directly; AC gets Sleep via SDL_Delay wrapping in SDL.dll rather than a direct kernel32 import. Third attempt: user32.dll!PeekMessageA — expected to work. If it also fails, run `ProcessToolkit.exe list-imports --pid <ac_pid>` on the VM to see AC's actual imports and pick a real one. --verify-hits 0 skips the runtime-firing counter check because the frame-rate-dependent cadence varies.",
       "expected_fingerprint": "PE header walk + import descriptor walk yields 6-12 small READVM_REMOTE events; 1x ALLOCVM_REMOTE (~4KB RWX); 1x WRITEVM_REMOTE (trampoline write, ~4KB); 1x PROTECTVM_REMOTE (IAT page RO->RW); 1x WRITEVM_REMOTE (4-byte slot overwrite); 1x PROTECTVM_REMOTE (restore). Small WRITEVM lands in ac_client.exe's IAT (parsable via pe_utils), NOT in .text — this is the distinguishing signal vs hook_inline_ac."
     }
   }

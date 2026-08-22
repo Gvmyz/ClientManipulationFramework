@@ -14,11 +14,11 @@
 #include "ApcInjection.h"
 #include "DllInjection.h"
 #include "HookInjection.h"
+#include "IatHook.h"
 #include "Memory.h"
 #include "MemoryPatch.h"
 #include "Process.h"
 #include "ProcessMemory.h"
-#include "SectionInjection.h"
 #include "Utils.h"
 
 namespace {
@@ -60,14 +60,6 @@ namespace {
 		// function whose RVA came from disassembly. --address takes precedence
 		// if both forms are supplied.
 		std::optional<std::uintptr_t> rva;
-		// inject-hollow-section: full path to the victim executable that will
-		// be launched CREATE_SUSPENDED and hollowed via a shared section map.
-		std::optional<std::wstring> victim_exe;
-		// inject-hollow-section: when true, adds the MITRE-aligned unmap
-		// step (NtUnmapViewOfSection on the victim's original .exe image).
-		// Contributes UNMAPVIEW to the syscall fingerprint but may cause the
-		// shellcode to fail to execute on modern Windows.
-		bool unmap_original_image{false};
 		// patch-aob: byte pattern (as hex, no wildcards for the baseline) to
 		// scan for across the target's committed memory before doing the
 		// write. Reused across --bytes semantics: the scan finds the address,
@@ -102,10 +94,10 @@ namespace {
 			<< L"                              (--address <hex> | --module <name> --rva <hex>)\n"
 			<< L"                              [--preserve-bytes <N>] [--verify]\n"
 			<< L"                              [--verify-wait-ms <ms>]\n"
+			<< L"  " << exe_name << L" hook-iat   --pid <pid> --module <dll> --call <function>\n"
+			<< L"                              [--verify] [--verify-wait-ms <ms>] [--verify-hits <N>]\n"
 			<< L"  " << exe_name << L" apc-inject --pid <pid> [--verify]\n"
 			<< L"                              [--verify-wait-ms <ms>] [--verify-hits <N>]\n"
-			<< L"  " << exe_name << L" inject-hollow-section --victim-exe <path> [--verify]\n"
-			<< L"                              [--verify-wait-ms <ms>]\n"
 			<< L"  " << exe_name << L" patch-aob --pid <pid> --aob-pattern <hex>\n"
 			<< L"                              [--bytes <hex>] [--restore-protection] [--verify]\n\n"
 			<< L"Examples:\n"
@@ -118,6 +110,7 @@ namespace {
 			<< L"  " << exe_name << L" patch-memory --pid 1234 --pointer-chain ac_client.exe+0x17E0A8->0xEC --bytes 64000000 --tick-count 20 --tick-interval-ms 50\n"
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --address 0x7FF6C0123ABC --verify\n"
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --module ac_client.exe --rva 0x12345 --verify\n"
+			<< L"  " << exe_name << L" hook-iat    --pid 1234 --module kernel32.dll --call SleepEx --verify\n"
 			<< L"  " << exe_name << L" apc-inject  --pid 1234 --verify --verify-wait-ms 2000\n"
 			<< L"  " << exe_name << L" patch-aob   --pid 1234 --aob-pattern 58020000 --bytes 0F270000 --verify\n";
 	}
@@ -299,10 +292,6 @@ namespace {
 					PT::Cli::print_error("Invalid --preserve-bytes value (expected integer >= 0)");
 					return std::nullopt;
 				}
-			} else if (arg == L"--victim-exe" && i + 1 < argc) {
-				options.victim_exe = argv[++i];
-			} else if (arg == L"--unmap-original") {
-				options.unmap_original_image = true;
 			} else if (arg == L"--rva" && i + 1 < argc) {
 				auto rva = parse_hex_address(argv[++i]);
 				if (!rva) {
@@ -704,6 +693,88 @@ namespace {
 		return 0;
 	}
 
+	int hook_iat(const Options& options) {
+		if (!options.pid) {
+			PT::Cli::print_error("hook-iat requires --pid");
+			return 2;
+		}
+		if (!options.module_name || options.module_name->empty()) {
+			PT::Cli::print_error("hook-iat requires --module (imported DLL name, e.g. kernel32.dll)");
+			return 2;
+		}
+		if (!options.function_name || options.function_name->empty()) {
+			PT::Cli::print_error("hook-iat requires --call (imported function name, e.g. SleepEx)");
+			return 2;
+		}
+
+		PT::Cli::print_section("Open Target Process");
+		auto process = PT::ProcessMemory::open_process(*options.pid);
+		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
+			return 1;
+		}
+
+		PT::Cli::print_section("Install IAT Hook");
+		std::wcout << L"  Imported module: " << *options.module_name << L'\n';
+		std::cout  << "  Function       : " << *options.function_name << '\n';
+
+		auto outcome = PT::IatHook::install_iat_hook(
+			process, *options.pid, *options.module_name, *options.function_name);
+		if (!PT::Cli::run_step("Installed IAT hook", outcome.has_value())) {
+			return 1;
+		}
+
+		PT::Cli::print_named_hex("IAT slot",             outcome->iat_slot_va);
+		PT::Cli::print_named_hex("Original target",      outcome->original_target_va);
+		PT::Cli::print_named_hex("Trampoline base",      outcome->trampoline_base);
+		PT::Cli::print_named_hex("Counter addr",         outcome->counter_va);
+		PT::Cli::print_named_value("Slot size (bytes)",  outcome->slot_size);
+
+		if (options.verify) {
+			PT::Cli::print_section("Verify");
+
+			// (a) Read the IAT slot back — must equal (trampoline_base + 0x10),
+			//     the shellcode entry point we wrote.
+			auto slot_bytes = PT::MemoryPatch::read_bytes(
+				process, outcome->iat_slot_va, outcome->slot_size);
+			if (!PT::Cli::run_step("Read IAT slot back", slot_bytes.has_value())) {
+				return 1;
+			}
+			std::uintptr_t observed_slot = 0;
+			std::memcpy(&observed_slot, slot_bytes->data(), outcome->slot_size);
+			const std::uintptr_t expected_slot = outcome->trampoline_base + 0x10;
+			const bool slot_matches = (observed_slot == expected_slot);
+			if (!PT::Cli::run_step("IAT slot now points at trampoline shellcode", slot_matches)) {
+				return 1;
+			}
+
+			// (b) Wait, then read the trampoline hit counter. Nonzero =>
+			//     the target has called through the hooked import at least
+			//     once. --verify-hits 0 skips the runtime-firing check (for
+			//     imports whose call cadence we don't know in advance).
+			if (options.min_verify_hits == 0) {
+				PT::Cli::print_named_value(
+					"Runtime-firing check", "skipped (--verify-hits 0)");
+				return 0;
+			}
+			if (options.verify_wait_ms > 0) {
+				Sleep(static_cast<DWORD>(options.verify_wait_ms));
+			}
+			auto counter = PT::IatHook::read_hit_counter(process, outcome->counter_va);
+			if (!PT::Cli::run_step("Read trampoline hit counter", counter.has_value())) {
+				return 1;
+			}
+			PT::Cli::print_named_value("Trampoline hits observed", *counter);
+			const bool fired = *counter >= static_cast<std::uint64_t>(options.min_verify_hits);
+			if (!PT::Cli::run_step(
+					std::format("IAT hook fired at least {} time(s)", options.min_verify_hits),
+					fired)) {
+				return 1;
+			}
+		}
+
+		return 0;
+	}
+
 	// Resolve a Cheat-Engine-style pointer chain in the target process.
 	// Syntax: "<module>+<hex-offset>[->hex-offset[->hex-offset...]]"
 	//
@@ -933,76 +1004,6 @@ namespace {
 		return 0;
 	}
 
-	int inject_hollow_section(const Options& options) {
-		if (!options.victim_exe || options.victim_exe->empty()) {
-			PT::Cli::print_error("inject-hollow-section requires --victim-exe <path>");
-			return 2;
-		}
-
-		PT::Cli::print_section("Launch Victim (CREATE_SUSPENDED) + Section Hollow");
-		std::wcout << L"[*] Victim: " << *options.victim_exe << L'\n';
-
-		auto outcome = PT::SectionInjection::install_section_mapped_hollowing(
-			*options.victim_exe, options.unmap_original_image);
-		if (!PT::Cli::run_step("Installed section-mapped hollowing", outcome.has_value())) {
-			return 1;
-		}
-
-		PT::Cli::print_named_value("Victim PID",             outcome->victim_pid);
-		PT::Cli::print_named_value("Victim main thread ID",  outcome->victim_thread_id);
-		PT::Cli::print_named_hex("Attacker-local view base",  outcome->local_view_base);
-		PT::Cli::print_named_hex("Victim-remote view base",   outcome->remote_view_base);
-		PT::Cli::print_named_value("Section size (bytes)",    outcome->section_size);
-		PT::Cli::print_named_hex("Counter address (local)",   outcome->local_view_base  + outcome->counter_offset);
-		PT::Cli::print_named_hex("Shellcode entry (remote)",  outcome->remote_view_base + outcome->shellcode_offset);
-
-		// Retrieve the victim handles so we can terminate cleanly after verify.
-		HANDLE victim_process = PT::SectionInjection::take_last_victim_process_handle();
-		HANDLE victim_thread  = PT::SectionInjection::take_last_victim_thread_handle();
-
-		int rc = 0;
-		if (options.verify) {
-			PT::Cli::print_section("Verify");
-
-			// The shellcode runs at victim's mapped section base + shellcode
-			// offset, does `lock inc [counter]; jmp $`. Verification is a
-			// LOCAL read from our own view of the section — the shared
-			// physical pages make the victim's increment immediately visible.
-			if (options.verify_wait_ms > 0) {
-				Sleep(static_cast<DWORD>(options.verify_wait_ms));
-			}
-			const std::uint64_t hits =
-				PT::SectionInjection::read_hit_counter_local(outcome->local_view_base);
-			PT::Cli::run_step("Read hit counter from local view",
-							  true /* memcpy from own view can't fail meaningfully */);
-			PT::Cli::print_named_value("Section hits observed", hits);
-
-			// --verify-hits 0 means "install-only verification, skip the
-			// runtime-firing check". Useful for the --unmap-original variant
-			// where the unmap step can prevent shellcode execution on modern
-			// Windows even though all the MITRE-cited syscalls did fire and
-			// were captured by ETW-TI.
-			if (options.min_verify_hits == 0) {
-				PT::Cli::run_step("Runtime-firing check skipped (--verify-hits 0)", true);
-			} else {
-				const int min_hits = options.min_verify_hits;
-				const bool ok = hits >= static_cast<std::uint64_t>(min_hits);
-				if (!PT::Cli::run_step(
-						std::format("Shellcode fired at least {} time(s)", min_hits),
-						ok)) {
-					rc = 1;
-				}
-			}
-		}
-
-		// Always clean up the victim — it's currently spinning in `jmp $`.
-		PT::Cli::print_section("Cleanup");
-		PT::SectionInjection::cleanup(*outcome, victim_process, victim_thread);
-		PT::Cli::run_step("Terminated victim + unmapped local view", true);
-
-		return rc;
-	}
-
 	int apc_inject(const Options& options) {
 		if (!options.pid) {
 			PT::Cli::print_error("apc-inject requires --pid");
@@ -1143,11 +1144,11 @@ int wmain(int argc, wchar_t** argv) {
 	if (command == L"hook-inline") {
 		return hook_inline(*options);
 	}
+	if (command == L"hook-iat") {
+		return hook_iat(*options);
+	}
 	if (command == L"apc-inject") {
 		return apc_inject(*options);
-	}
-	if (command == L"inject-hollow-section") {
-		return inject_hollow_section(*options);
 	}
 	if (command == L"patch-aob") {
 		return patch_aob(*options);

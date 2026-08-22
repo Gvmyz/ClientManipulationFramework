@@ -1,0 +1,44 @@
+{
+  "name": "hook_iat",
+  "description": "Cross-process IAT (Import Address Table) hook against TestTarget. The attacker walks TestTarget's PE import descriptor table cross-process, locates the IAT slot for kernel32.dll!SleepEx (which TestTarget's main loop calls every 10 ms), allocates a small RWX trampoline in the target, writes a counter-increment + jump-to-original shellcode, flips the IAT page RO->RW, overwrites the 8-byte (x64) / 4-byte (x86) pointer slot with the trampoline shellcode address, and restores the IAT page's protection. Distinct from hook_inline: the overwritten write hits the target's IAT (typically inside .rdata or .idata, always in a page originally PAGE_READONLY), NOT the target's .text prologue — the write region is the primary distinguishing signal at classification time (see analysis/pe_utils.py). IAT hook is one of the two most common hook variants documented in game-cheat literature (alongside inline hook of graphics API entry points) — used to intercept imports like SleepEx, GetAsyncKeyState, or graphics presentation calls without touching module code sections.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "hook-iat --pid {targetPid} --module kernel32.dll --call SleepEx --verify --verify-wait-ms 2000"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "hook_iat",
+    "class": "hook",
+    "variant": "iat",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "TestTarget.exe",
+    "extra": {
+      "import_module": "kernel32.dll",
+      "import_function": "SleepEx",
+      "iat_slot_bytes": 8,
+      "trampoline_size_bytes": 4096,
+      "notes": "Expected fingerprint: many small READVM_REMOTE events (PE header walk + import descriptor walk + name-string reads + IAT slot probe — typically 6-12 reads), 1x ALLOCVM_REMOTE (RWX trampoline, ~4KB), 1x WRITEVM_REMOTE (trampoline shellcode write, ~4KB), 1x PROTECTVM_REMOTE (IAT page RO->RW), 1x WRITEVM_REMOTE (pointer-sized slot overwrite: 8 bytes x64 / 4 bytes x86), 1x PROTECTVM_REMOTE (IAT page restore). No THREAD_CREATE_REMOTE. Distinguishing signal vs hook_inline: the small WRITEVM target address falls inside the target's IAT (parsed offline by analysis/pe_utils.py from DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT]), whereas an inline hook's small WRITEVM lands in a module's .text section."
+    }
+  }
+}

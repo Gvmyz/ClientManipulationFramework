@@ -1,0 +1,46 @@
+{
+  "name": "hook_iat_ac",
+  "description": "Cross-process IAT hook against AssaultCube (32-bit ac_client.exe). Attacker locates the IAT slot for user32.dll!GetAsyncKeyState (called every frame by AC's input loop) and overwrites it with a trampoline shellcode address. Same primitive as hook_iat against TestTarget — this variant validates the fingerprint against a real game process and a real per-frame input import. GetAsyncKeyState is chosen because it is (a) imported by ac_client.exe, (b) called every frame at high rate (>60 Hz) so the trampoline counter reliably reads nonzero within the verify window, and (c) a documented target for aim-assist and trigger-bot cheats that need to detect key presses ahead of the game loop. Alternative imports for future runs: user32.dll!GetCursorPos (mouse position), kernel32.dll!Sleep (frame pacing).",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 5,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "experiments\\targets\\assaultcube\\bin_win32\\ac_client.exe",
+    "arguments": "--home=. --init --loadmap=ac_desert",
+    "workingDirectory": "experiments\\targets\\assaultcube"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\Win32\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release",
+    "commandLineTemplate": "hook-iat --pid {targetPid} --module user32.dll --call GetAsyncKeyState --verify --verify-wait-ms 3000"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "hook_iat_ac",
+    "class": "hook",
+    "variant": "iat",
+    "source": "synthetic",
+    "evasion": null,
+    "target": "ac_client.exe",
+    "extra": {
+      "arch": "x86",
+      "import_module": "user32.dll",
+      "import_function": "GetAsyncKeyState",
+      "iat_slot_bytes": 4,
+      "trampoline_size_bytes": 4096,
+      "target_selection_notes": "GetAsyncKeyState is imported by ac_client.exe and called every frame in the input polling loop. If this import is not present in a given AC build, alternatives are: user32.dll!GetCursorPos, user32.dll!PeekMessageA, kernel32.dll!Sleep, kernel32.dll!QueryPerformanceCounter — all imported at high call frequency by SDL-based games.",
+      "expected_fingerprint": "PE header walk + import descriptor walk yields 6-12 small READVM_REMOTE events; 1x ALLOCVM_REMOTE (~4KB RWX); 1x WRITEVM_REMOTE (trampoline write, ~4KB); 1x PROTECTVM_REMOTE (IAT page RO->RW); 1x WRITEVM_REMOTE (4-byte slot overwrite); 1x PROTECTVM_REMOTE (restore). Small WRITEVM lands in ac_client.exe's IAT (parsable via pe_utils), NOT in .text — this is the distinguishing signal vs hook_inline_ac."
+    }
+  }
+}

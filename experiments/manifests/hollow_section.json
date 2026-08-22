@@ -23,7 +23,7 @@
   "manipulation": {
     "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
     "workingDirectory": "ProcessToolkit\\x64\\Release",
-    "commandLineTemplate": "inject-hollow-section --victim-exe TestTarget.exe --verify --verify-wait-ms 1500"
+    "commandLineTemplate": "inject-hollow-section --victim-exe TestTarget.exe --unmap-original --verify --verify-hits 0 --verify-wait-ms 1500"
   },
   "metadata": {
     "label": "attack",

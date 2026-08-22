@@ -23,7 +23,7 @@
   "manipulation": {
     "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
     "workingDirectory": "ProcessToolkit\\Win32\\Release",
-    "commandLineTemplate": "inject-hollow-section --victim-exe \"C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe\" --verify --verify-wait-ms 2000"
+    "commandLineTemplate": "inject-hollow-section --victim-exe \"C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe\" --unmap-original --verify --verify-hits 0 --verify-wait-ms 2000"
   },
   "metadata": {
     "label": "attack",

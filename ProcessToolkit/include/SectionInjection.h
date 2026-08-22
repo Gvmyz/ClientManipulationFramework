@@ -61,8 +61,18 @@ namespace PT::SectionInjection {
 	// needed for verification. Nonzero counter after brief sleep proves the
 	// shellcode ran; zero after N seconds indicates the victim never reached
 	// the redirected RIP (usually a bad address setup).
+	// unmap_original_image = true enables the MITRE T1055.012-aligned step of
+	// calling NtUnmapViewOfSection on the victim's original .exe image before
+	// mapping our section. Adds the KERNEL_THREATINT_TASK_UNMAPVIEW cross-
+	// process event to the fingerprint — a distinctive syscall in the
+	// hollowing recipe. Default false because on Windows 11 24H2 the unmap
+	// step disrupts the subsequent SetThreadContext+ResumeThread path (the
+	// shellcode never actually executes) — a real trade-off documented in
+	// the hollowing literature as motivating "no-unmap" variants used by
+	// modern malware for reliability on current Windows builds.
 	std::optional<SectionHollowOutcome> install_section_mapped_hollowing(
-		const std::wstring& victim_exe_path
+		const std::wstring& victim_exe_path,
+		bool unmap_original_image = false
 	);
 
 	// Read the hit counter from the attacker's own local view of the section.

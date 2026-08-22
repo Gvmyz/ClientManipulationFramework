@@ -63,6 +63,11 @@ namespace {
 		// inject-hollow-section: full path to the victim executable that will
 		// be launched CREATE_SUSPENDED and hollowed via a shared section map.
 		std::optional<std::wstring> victim_exe;
+		// inject-hollow-section: when true, adds the MITRE-aligned unmap
+		// step (NtUnmapViewOfSection on the victim's original .exe image).
+		// Contributes UNMAPVIEW to the syscall fingerprint but may cause the
+		// shellcode to fail to execute on modern Windows.
+		bool unmap_original_image{false};
 		// patch-aob: byte pattern (as hex, no wildcards for the baseline) to
 		// scan for across the target's committed memory before doing the
 		// write. Reused across --bytes semantics: the scan finds the address,
@@ -296,6 +301,8 @@ namespace {
 				}
 			} else if (arg == L"--victim-exe" && i + 1 < argc) {
 				options.victim_exe = argv[++i];
+			} else if (arg == L"--unmap-original") {
+				options.unmap_original_image = true;
 			} else if (arg == L"--rva" && i + 1 < argc) {
 				auto rva = parse_hex_address(argv[++i]);
 				if (!rva) {
@@ -935,7 +942,8 @@ namespace {
 		PT::Cli::print_section("Launch Victim (CREATE_SUSPENDED) + Section Hollow");
 		std::wcout << L"[*] Victim: " << *options.victim_exe << L'\n';
 
-		auto outcome = PT::SectionInjection::install_section_mapped_hollowing(*options.victim_exe);
+		auto outcome = PT::SectionInjection::install_section_mapped_hollowing(
+			*options.victim_exe, options.unmap_original_image);
 		if (!PT::Cli::run_step("Installed section-mapped hollowing", outcome.has_value())) {
 			return 1;
 		}
@@ -969,15 +977,21 @@ namespace {
 							  true /* memcpy from own view can't fail meaningfully */);
 			PT::Cli::print_named_value("Section hits observed", hits);
 
-			// Windows.h defines `max` as a macro which collides with std::max
-			// inside std::format — compute the threshold out-of-line.
-			const int min_hits =
-				(options.min_verify_hits < 1) ? 1 : options.min_verify_hits;
-			const bool ok = hits >= static_cast<std::uint64_t>(min_hits);
-			if (!PT::Cli::run_step(
-					std::format("Shellcode fired at least {} time(s)", min_hits),
-					ok)) {
-				rc = 1;
+			// --verify-hits 0 means "install-only verification, skip the
+			// runtime-firing check". Useful for the --unmap-original variant
+			// where the unmap step can prevent shellcode execution on modern
+			// Windows even though all the MITRE-cited syscalls did fire and
+			// were captured by ETW-TI.
+			if (options.min_verify_hits == 0) {
+				PT::Cli::run_step("Runtime-firing check skipped (--verify-hits 0)", true);
+			} else {
+				const int min_hits = options.min_verify_hits;
+				const bool ok = hits >= static_cast<std::uint64_t>(min_hits);
+				if (!PT::Cli::run_step(
+						std::format("Shellcode fired at least {} time(s)", min_hits),
+						ok)) {
+					rc = 1;
+				}
 			}
 		}
 

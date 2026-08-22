@@ -23,7 +23,7 @@
   "manipulation": {
     "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
     "workingDirectory": "ProcessToolkit\\Win32\\Release",
-    "commandLineTemplate": "hook-iat --pid {targetPid} --module user32.dll --call PeekMessageA --verify --verify-wait-ms 3000 --verify-hits 0"
+    "commandLineTemplate": "hook-iat --pid {targetPid} --module kernel32.dll --call QueryPerformanceCounter --verify --verify-wait-ms 3000 --verify-hits 0"
   },
   "metadata": {
     "label": "attack",

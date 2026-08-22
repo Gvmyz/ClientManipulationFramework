@@ -96,6 +96,9 @@ namespace {
 			<< L"                              [--verify-wait-ms <ms>]\n"
 			<< L"  " << exe_name << L" hook-iat   --pid <pid> --module <dll> --call <function>\n"
 			<< L"                              [--verify] [--verify-wait-ms <ms>] [--verify-hits <N>]\n"
+			<< L"  " << exe_name << L" list-imports --pid <pid>\n"
+			<< L"                              (diagnostic: prints every (dll, function) pair the target imports;\n"
+			<< L"                               use to pick a valid --module + --call for hook-iat)\n"
 			<< L"  " << exe_name << L" apc-inject --pid <pid> [--verify]\n"
 			<< L"                              [--verify-wait-ms <ms>] [--verify-hits <N>]\n"
 			<< L"  " << exe_name << L" patch-aob --pid <pid> --aob-pattern <hex>\n"
@@ -693,6 +696,123 @@ namespace {
 		return 0;
 	}
 
+	// Enumerate the target's import descriptor table and print every
+	// (import_dll, function_name) pair. Diagnostic — helps pick a valid
+	// (module, function) pair for `hook-iat` against unfamiliar targets
+	// (e.g. AC's ac_client.exe imports Win32 message-loop APIs but does NOT
+	// import GetAsyncKeyState, which is what motivated adding this).
+	int list_imports(const Options& options) {
+		if (!options.pid) {
+			PT::Cli::print_error("list-imports requires --pid");
+			return 2;
+		}
+
+		PT::Cli::print_section("Open Target Process");
+		auto process = PT::Process::open_process(
+			*options.pid, PROCESS_QUERY_INFORMATION | PROCESS_VM_READ);
+		if (!PT::Cli::run_step(std::format("Opened process {}", *options.pid), process.valid())) {
+			return 1;
+		}
+
+		HMODULE modules[512]{};
+		DWORD needed = 0;
+		if (!EnumProcessModulesEx(process.get(), modules, sizeof(modules), &needed, LIST_MODULES_ALL)) {
+			PT::Cli::print_error("EnumProcessModulesEx failed");
+			return 1;
+		}
+		if (needed < sizeof(HMODULE)) {
+			PT::Cli::print_error("target has zero loaded modules");
+			return 1;
+		}
+		const std::uintptr_t image_base = reinterpret_cast<std::uintptr_t>(modules[0]);
+
+		PT::Cli::print_section("Walk Import Descriptors");
+		PT::Cli::print_named_hex("Main image base", image_base);
+
+		IMAGE_DOS_HEADER dos{};
+		if (!PT::Memory::read_trivial_memory(process, image_base, dos) ||
+			dos.e_magic != IMAGE_DOS_SIGNATURE) {
+			PT::Cli::print_error("main image has no valid DOS header");
+			return 1;
+		}
+		const std::uintptr_t nt_addr = image_base + dos.e_lfanew;
+#ifdef _WIN64
+		IMAGE_NT_HEADERS64 nt{};
+#else
+		IMAGE_NT_HEADERS32 nt{};
+#endif
+		if (!PT::Memory::read_trivial_memory(process, nt_addr, nt) ||
+			nt.Signature != IMAGE_NT_SIGNATURE) {
+			PT::Cli::print_error("main image has no valid NT headers");
+			return 1;
+		}
+		const auto& imp_dir = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+		if (imp_dir.VirtualAddress == 0 || imp_dir.Size == 0) {
+			PT::Cli::print_error("main image has no import directory");
+			return 1;
+		}
+		const std::uintptr_t desc_base = image_base + imp_dir.VirtualAddress;
+
+		auto read_c_str = [&](std::uintptr_t addr) -> std::string {
+			std::string out;
+			std::uint8_t byte;
+			for (std::size_t i = 0; i < 256; ++i) {
+				if (!PT::Memory::read_trivial_memory(process, addr + i, byte) || byte == 0) break;
+				out.push_back(static_cast<char>(byte));
+			}
+			return out;
+		};
+
+		std::size_t total_dlls = 0, total_fns = 0;
+		for (std::size_t i = 0; ; ++i) {
+			IMAGE_IMPORT_DESCRIPTOR desc{};
+			if (!PT::Memory::read_trivial_memory(
+					process, desc_base + i * sizeof(desc), desc)) break;
+			if (desc.Name == 0 && desc.FirstThunk == 0) break;
+
+			const std::string dll = read_c_str(image_base + desc.Name);
+			if (dll.empty()) continue;
+			total_dlls++;
+			std::cout << "\n[" << dll << "]\n";
+
+			if (desc.OriginalFirstThunk == 0) {
+				std::cout << "  (bound imports — names not readable)\n";
+				continue;
+			}
+			const std::uintptr_t int_base = image_base + desc.OriginalFirstThunk;
+			for (std::size_t j = 0; ; ++j) {
+#ifdef _WIN64
+				IMAGE_THUNK_DATA64 thunk{};
+				if (!PT::Memory::read_trivial_memory(
+						process, int_base + j * sizeof(thunk), thunk)) break;
+				if (thunk.u1.AddressOfData == 0) break;
+				if (thunk.u1.Ordinal & IMAGE_ORDINAL_FLAG64) {
+					std::cout << "  (ordinal " << (thunk.u1.Ordinal & 0xFFFF) << ")\n";
+					continue;
+				}
+#else
+				IMAGE_THUNK_DATA32 thunk{};
+				if (!PT::Memory::read_trivial_memory(
+						process, int_base + j * sizeof(thunk), thunk)) break;
+				if (thunk.u1.AddressOfData == 0) break;
+				if (thunk.u1.Ordinal & IMAGE_ORDINAL_FLAG32) {
+					std::cout << "  (ordinal " << (thunk.u1.Ordinal & 0xFFFF) << ")\n";
+					continue;
+				}
+#endif
+				const std::string fn = read_c_str(image_base + thunk.u1.AddressOfData + sizeof(WORD));
+				if (fn.empty()) continue;
+				total_fns++;
+				std::cout << "  " << fn << "\n";
+			}
+		}
+
+		std::cout << "\n";
+		PT::Cli::print_named_value("Imported DLLs (with named imports)", total_dlls);
+		PT::Cli::print_named_value("Named imports total", total_fns);
+		return 0;
+	}
+
 	int hook_iat(const Options& options) {
 		if (!options.pid) {
 			PT::Cli::print_error("hook-iat requires --pid");
@@ -1146,6 +1266,9 @@ int wmain(int argc, wchar_t** argv) {
 	}
 	if (command == L"hook-iat") {
 		return hook_iat(*options);
+	}
+	if (command == L"list-imports") {
+		return list_imports(*options);
 	}
 	if (command == L"apc-inject") {
 		return apc_inject(*options);

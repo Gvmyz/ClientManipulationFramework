@@ -2,6 +2,7 @@
 
 #include <Psapi.h>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -229,33 +230,59 @@ namespace PT::IatHook {
 		std::string_view function_name)
 	{
 		if (!process || import_module.empty() || function_name.empty()) {
+			std::fprintf(stderr, "[iat-hook] invalid arguments\n");
 			return std::nullopt;
 		}
+
+		const std::string dll_ascii = wide_to_narrow_ascii(import_module);
 
 		// Enum modules; the main image is always the first entry.
 		HMODULE modules[512]{};
 		DWORD needed = 0;
 		if (!EnumProcessModulesEx(
 				process.get(), modules, sizeof(modules), &needed, LIST_MODULES_ALL)) {
+			std::fprintf(stderr,
+				"[iat-hook] EnumProcessModulesEx failed (GetLastError=%lu)\n",
+				GetLastError());
 			return std::nullopt;
 		}
-		if (needed < sizeof(HMODULE)) return std::nullopt;
+		if (needed < sizeof(HMODULE)) {
+			std::fprintf(stderr, "[iat-hook] target has zero loaded modules\n");
+			return std::nullopt;
+		}
 		const std::uintptr_t image_base =
 			reinterpret_cast<std::uintptr_t>(modules[0]);
 
-		const std::string dll_ascii = wide_to_narrow_ascii(import_module);
 		auto slot = find_iat_slot(process, image_base, dll_ascii, function_name);
-		if (!slot) return std::nullopt;
+		if (!slot) {
+			std::fprintf(stderr,
+				"[iat-hook] target does not import %s!%.*s (walked import table "
+				"of module at 0x%p; no matching descriptor+thunk found). Try a "
+				"different (dll, function) pair — pick one from the target's "
+				"actual imports.\n",
+				dll_ascii.c_str(),
+				static_cast<int>(function_name.size()), function_name.data(),
+				reinterpret_cast<void*>(image_base));
+			return std::nullopt;
+		}
 
 		auto trampoline_base = PT::Memory::allocate_memory(
 			process, TRAMPOLINE_SIZE,
 			MEM_COMMIT | MEM_RESERVE,
 			PAGE_EXECUTE_READWRITE);
-		if (!trampoline_base) return std::nullopt;
+		if (!trampoline_base) {
+			std::fprintf(stderr,
+				"[iat-hook] VirtualAllocEx(RWX, %zu) failed (GetLastError=%lu)\n",
+				TRAMPOLINE_SIZE, GetLastError());
+			return std::nullopt;
+		}
 
 		auto tramp_bytes = build_trampoline(*trampoline_base, slot->original_target);
 		if (!PT::Memory::write_memory(
 				process, *trampoline_base, tramp_bytes.data(), tramp_bytes.size())) {
+			std::fprintf(stderr,
+				"[iat-hook] WriteProcessMemory(trampoline) failed (GetLastError=%lu)\n",
+				GetLastError());
 			PT::Memory::free_memory(process, *trampoline_base, 0);
 			return std::nullopt;
 		}
@@ -277,6 +304,11 @@ namespace PT::IatHook {
 		auto patch = PT::MemoryPatch::patch_bytes(
 			process, slot->slot_va, slot_bytes, /*change_protection=*/true);
 		if (!patch) {
+			std::fprintf(stderr,
+				"[iat-hook] IAT slot overwrite at 0x%p failed "
+				"(patch_bytes returned nullopt — VirtualProtectEx or "
+				"WriteProcessMemory refused)\n",
+				reinterpret_cast<void*>(slot->slot_va));
 			PT::Memory::free_memory(process, *trampoline_base, 0);
 			return std::nullopt;
 		}

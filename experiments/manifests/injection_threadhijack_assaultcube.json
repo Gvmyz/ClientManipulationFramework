@@ -1,10 +1,19 @@
 {
   "name": "injection_threadhijack_assaultcube",
-  "description": "Phase-1 attack. Thread-hijack injection of x86 TestDll into ac_client.exe using the x86 build of ProcessToolkit. Suspends an existing thread, redirects EIP to an x86 shellcode stub that calls LoadLibraryW then jumps back. Attack fires after bot-match warmup.",
+  "description": "Thread-hijack DLL injection into ac_client.exe (MITRE T1055.003).",
   "providers": [
-    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
-    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
-    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
   ],
   "sessionName": "TISession",
   "timings": {
@@ -38,7 +47,7 @@
       "target_bitness": "x86",
       "attacker_bitness": "x86",
       "windows_build": "26200",
-      "notes": "Uses the x86 hijack stub (22 bytes: pushfd/pushad + push dll_path + call LoadLibraryW + popad/popfd + push original_eip + ret). Hijacks the first enumerable thread in ac_client.exe. On real games this often lands on the render thread — no functional issue (LoadLibraryW returns quickly, stub jumps back to original EIP)."
+      "notes": "Uses the x86 hijack stub (22 bytes: pushfd/pushad + push dll_path + call LoadLibraryW + popad/popfd + push original_eip + ret). Hijacks the first enumerable thread in ac_client.exe. On real games this often lands on the render thread \u2014 no functional issue (LoadLibraryW returns quickly, stub jumps back to original EIP)."
     }
   }
 }

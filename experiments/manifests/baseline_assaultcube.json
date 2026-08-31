@@ -1,10 +1,19 @@
 {
   "name": "baseline_assaultcube",
-  "description": "AssaultCube benign baseline. Launches ac_client.exe directly (bypassing the .bat launcher so PID scoping works), which auto-starts a scripted local bot match via the autostart config at ~/Documents/My Games/AssaultCube/v1.3/config/autostart/autostart-baseline.cfg. Fixed observation window, no player input. Establishes the noise floor for RQ4 attack-vs-benign discrimination and for the AssaultCube-cross-target comparison in RQ1.",
+  "description": "Benign ac_client.exe trace in a scripted bot match; no manipulation.",
   "providers": [
-    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
-    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
-    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
   ],
   "sessionName": "TISession",
   "timings": {

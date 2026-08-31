@@ -1,10 +1,19 @@
 {
   "name": "baseline",
-  "description": "Benign trace of the test target running without any manipulation. The ping no-op holds the observation window open long enough for the ETW session to capture steady-state activity; the cooldown gives the telemetry process time to flush its write buffer before being stopped.",
+  "description": "Benign TestTarget trace; no manipulation.",
   "providers": [
-    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
-    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
-    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
   ],
   "sessionName": "TISession",
   "timings": {

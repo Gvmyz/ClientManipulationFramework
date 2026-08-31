@@ -1,18 +1,10 @@
 {
-  "name": "apc_classic_ac",
-  "description": "APC injection against ac_client.exe (install-only; AC's main thread never enters alertable wait).",
+  "name": "apc_classic_ac_ti_only",
+  "description": "APC injection against ac_client.exe (install-only; AC's main thread never enters alertable wait). RQ3 evasion: only ETW-TI subscribed.",
   "providers": [
     {
       "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
       "name": "ThreatIntelligence"
-    },
-    {
-      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
-      "name": "KernelProcess"
-    },
-    {
-      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
-      "name": "Sysmon"
     }
   ],
   "sessionName": "TISession",
@@ -40,7 +32,7 @@
     "class": "injection",
     "variant": "apc",
     "source": "synthetic",
-    "evasion": null,
+    "evasion": "ti_only",
     "target": "ac_client.exe",
     "extra": {
       "arch": "x86",

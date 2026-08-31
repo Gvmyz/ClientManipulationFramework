@@ -1,0 +1,37 @@
+{
+  "name": "baseline_xonotic",
+  "description": "Benign xonotic.exe trace; no manipulation.",
+  "providers": [
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 20,
+    "cooldownSeconds": 10
+  },
+  "target": {
+    "executable": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic\\xonotic.exe",
+    "arguments": "-window -width 800 -height 600 +sv_public 0 +map warfare +bot_number 5",
+    "workingDirectory": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "C:\\Windows\\System32\\ping.exe",
+    "workingDirectory": "C:\\Windows\\System32",
+    "commandLineTemplate": "-n 6 127.0.0.1"
+  },
+  "metadata": {
+    "label": "baseline",
+    "technique": "none",
+    "target": "xonotic.exe",
+    "extra": {
+      "target_bitness": "x64",
+      "notes": "Auto-starts a local bot match on warfare with 5 bots via Xonotic's console-command CLI."
+    }
+  }
+}

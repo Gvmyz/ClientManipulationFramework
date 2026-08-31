@@ -8,7 +8,7 @@
   ],
   "sessionName": "TISession",
   "timings": {
-    "warmupSeconds": 20,
+    "warmupSeconds": 30,
     "cooldownSeconds": 10
   },
   "target": {

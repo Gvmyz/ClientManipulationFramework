@@ -21,6 +21,8 @@
 #include "ProcessMemory.h"
 #include "Utils.h"
 #include "DirectSyscall.h"
+#include "UsermodeHookProbe.h"
+#include <sstream>
 
 namespace {
 	struct Options {
@@ -83,6 +85,14 @@ namespace {
 		// instruction directly and bypass every user-mode hook on
 		// ntdll's exports. This is the RQ3 direct-syscall evasion axis.
 		bool via_direct_syscall{false};
+
+		// --observe-usermode-hooks: RQ3 diagnostic. Install our own inline
+		// hooks on ntdll's Nt* exports before the attack runs. Counts and
+		// logs every invocation. Under the Win32 path counters increment
+		// (>= 4); under --via-direct-syscall they stay at 0. Combined with
+		// the observation that ETW-TI and Sysmon still fire in both cases,
+		// this produces the four-cell RQ3 evidence table.
+		bool observe_usermode_hooks{false};
 	};
 
 	void print_usage(const wchar_t* exe_name) {
@@ -121,7 +131,14 @@ namespace {
 			<< L"                              resolved at startup by parsing ntdll's export table\n"
 			<< L"                              (HellsGate; no hardcoded numbers). ETW-TI still fires\n"
 			<< L"                              because those events originate in kernel mode.\n"
-			<< L"                              Aborts the run if ntdll's stubs appear hooked.\n\n"
+			<< L"                              Aborts the run if ntdll's stubs appear hooked.\n"
+			<< L"  --observe-usermode-hooks    RQ3 diagnostic: install inline hooks on our own\n"
+			<< L"                              ntdll's Nt* exports before the attack runs; count\n"
+			<< L"                              and log every invocation. Under the Win32 path\n"
+			<< L"                              counters increment (>= 4); under --via-direct-syscall\n"
+			<< L"                              they stay at 0 -- empirical proof that direct-syscall\n"
+			<< L"                              bypasses user-mode API hooks. Log file:\n"
+			<< L"                              usermode-hooks-<targetPid>-<attackerPid>.log.\n\n"
 			<< L"Examples:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid 1234 --committed --executable\n"
@@ -270,6 +287,8 @@ namespace {
 				options.restore_protection = true;
 			} else if (arg == L"--via-direct-syscall") {
 				options.via_direct_syscall = true;
+			} else if (arg == L"--observe-usermode-hooks") {
+				options.observe_usermode_hooks = true;
 			} else if (arg == L"--verify") {
 				options.verify = true;
 			} else if (arg == L"--tick-count" && i + 1 < argc) {
@@ -1286,38 +1305,72 @@ int wmain(int argc, wchar_t** argv) {
 		std::wcout << L"[+] Direct-syscall dispatch enabled (RQ3 evasion)\n";
 	}
 
-	if (command == L"inspect-memory") {
-		return inspect_memory(*options);
-	}
-	if (command == L"inject-loadlibrary") {
-		return inject_loadlibrary(*options);
-	}
-	if (command == L"inject-manualmap") {
-		return inject_manualmap(*options);
-	}
-	if (command == L"inject-threadhijack") {
-		return inject_threadhijack(*options);
-	}
-	if (command == L"patch-memory") {
-		return patch_memory(*options);
-	}
-	if (command == L"hook-inline") {
-		return hook_inline(*options);
-	}
-	if (command == L"hook-iat") {
-		return hook_iat(*options);
-	}
-	if (command == L"list-imports") {
-		return list_imports(*options);
-	}
-	if (command == L"apc-inject") {
-		return apc_inject(*options);
-	}
-	if (command == L"patch-aob") {
-		return patch_aob(*options);
+	// RQ3 diagnostic: install user-mode hooks on our own ntdll so we can
+	// count how many times the attack code path would have been observable
+	// to a user-mode-hooking EDR. Compare counts across --via-direct-syscall
+	// on/off. Requires DirectSyscall to be initialized (probe forwards to
+	// Direct_Nt* stubs to avoid recursing into its own hooks).
+	if (options->observe_usermode_hooks) {
+		if (!PT::DirectSyscall::IsResolved() && !PT::DirectSyscall::Initialize()) {
+			PT::Cli::print_error(
+				"--observe-usermode-hooks requested but DirectSyscall init failed.");
+			return 3;
+		}
+		std::wstringstream log_path;
+		log_path << L"usermode-hooks-"
+		         << (options->pid ? *options->pid : 0) << L"-"
+		         << GetCurrentProcessId() << L".log";
+		if (!PT::UsermodeHookProbe::Install(log_path.str())) {
+			PT::Cli::print_error(
+				"--observe-usermode-hooks: probe install failed.");
+			return 3;
+		}
+		// Zero the counters AFTER install so we ignore any invocations
+		// that happened during startup / loader activity. Counts now
+		// reflect only what the attack code triggers.
+		PT::UsermodeHookProbe::ResetCounts();
+		std::wcout << L"[+] User-mode hook probe installed (RQ3 diagnostic; log: "
+		           << log_path.str() << L")\n";
 	}
 
-	std::wcerr << L"Unknown command: " << command << L'\n';
-	print_usage(argv[0]);
-	return 2;
+	// Helper: dispatch a subcommand by name. Returns the subcommand's
+	// exit code, or -1 for "unknown command" (caller handles usage print).
+	auto dispatch_command = [&](const std::wstring_view& c) -> int {
+		if (c == L"inspect-memory")       return inspect_memory(*options);
+		if (c == L"inject-loadlibrary")   return inject_loadlibrary(*options);
+		if (c == L"inject-manualmap")     return inject_manualmap(*options);
+		if (c == L"inject-threadhijack")  return inject_threadhijack(*options);
+		if (c == L"patch-memory")         return patch_memory(*options);
+		if (c == L"hook-inline")          return hook_inline(*options);
+		if (c == L"hook-iat")             return hook_iat(*options);
+		if (c == L"list-imports")         return list_imports(*options);
+		if (c == L"apc-inject")           return apc_inject(*options);
+		if (c == L"patch-aob")            return patch_aob(*options);
+		return -1;  // sentinel for unknown-command handling below
+	};
+
+	int subcommand_rc = dispatch_command(command);
+
+	// If the probe was installed, dump the counts before we return. This
+	// runs whether the subcommand succeeded or not, so a partially-
+	// completed attack still reports what user-mode hooks it fired.
+	if (options->observe_usermode_hooks) {
+		const auto& c = PT::UsermodeHookProbe::GetCounts();
+		std::wcout << L"\n=== User-mode hook probe results ===\n"
+		           << L"  NtOpenProcess:           " << c.NtOpenProcess.load() << L"\n"
+		           << L"  NtAllocateVirtualMemory: " << c.NtAllocateVirtualMemory.load() << L"\n"
+		           << L"  NtProtectVirtualMemory:  " << c.NtProtectVirtualMemory.load() << L"\n"
+		           << L"  NtWriteVirtualMemory:    " << c.NtWriteVirtualMemory.load() << L"\n"
+		           << L"  NtReadVirtualMemory:     " << c.NtReadVirtualMemory.load() << L"\n"
+		           << L"  NtCreateThreadEx:        " << c.NtCreateThreadEx.load() << L"\n"
+		           << L"  (log: " << PT::UsermodeHookProbe::GetLogPath() << L")\n";
+		PT::UsermodeHookProbe::Uninstall();
+	}
+
+	if (subcommand_rc == -1) {
+		std::wcerr << L"Unknown command: " << command << L'\n';
+		print_usage(argv[0]);
+		return 2;
+	}
+	return subcommand_rc;
 }

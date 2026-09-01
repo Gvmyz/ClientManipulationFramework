@@ -111,6 +111,17 @@ namespace {
 			<< L"                              [--verify-wait-ms <ms>] [--verify-hits <N>]\n"
 			<< L"  " << exe_name << L" patch-aob --pid <pid> --aob-pattern <hex>\n"
 			<< L"                              [--bytes <hex>] [--restore-protection] [--verify]\n\n"
+			<< L"Global options (accepted by every subcommand):\n"
+			<< L"  --via-direct-syscall        RQ3 evasion: emit the syscall instruction directly\n"
+			<< L"                              from ProcessToolkit for every cross-process memory\n"
+			<< L"                              primitive (NtOpenProcess / NtAllocateVirtualMemory /\n"
+			<< L"                              NtWriteVirtualMemory / NtReadVirtualMemory /\n"
+			<< L"                              NtProtectVirtualMemory / NtCreateThreadEx), bypassing\n"
+			<< L"                              every user-mode ntdll hook. Syscall numbers are\n"
+			<< L"                              resolved at startup by parsing ntdll's export table\n"
+			<< L"                              (HellsGate; no hardcoded numbers). ETW-TI still fires\n"
+			<< L"                              because those events originate in kernel mode.\n"
+			<< L"                              Aborts the run if ntdll's stubs appear hooked.\n\n"
 			<< L"Examples:\n"
 			<< L"  " << exe_name << L" list-processes\n"
 			<< L"  " << exe_name << L" inspect-memory --pid 1234 --committed --executable\n"
@@ -123,7 +134,8 @@ namespace {
 			<< L"  " << exe_name << L" hook-inline --pid 1234 --module ac_client.exe --rva 0x12345 --verify\n"
 			<< L"  " << exe_name << L" hook-iat    --pid 1234 --module kernel32.dll --call SleepEx --verify\n"
 			<< L"  " << exe_name << L" apc-inject  --pid 1234 --verify --verify-wait-ms 2000\n"
-			<< L"  " << exe_name << L" patch-aob   --pid 1234 --aob-pattern 58020000 --bytes 0F270000 --verify\n";
+			<< L"  " << exe_name << L" patch-aob   --pid 1234 --aob-pattern 58020000 --bytes 0F270000 --verify\n"
+			<< L"  " << exe_name << L" inject-loadlibrary --pid 1234 --dll C:\\path\\TestDll.dll --via-direct-syscall\n";
 	}
 
 	std::optional<DWORD> parse_pid(std::wstring_view value) {

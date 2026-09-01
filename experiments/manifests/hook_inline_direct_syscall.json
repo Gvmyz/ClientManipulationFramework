@@ -1,0 +1,52 @@
+{
+  "name": "hook_inline_direct_syscall",
+  "description": "Cross-process inline hook of a TestTarget function via 14-byte JMP + trampoline.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "hook-inline --pid {targetPid} --address {targetInfo.hookable_function_addr} --verify --verify-wait-ms 2000 --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "hook_inline",
+    "class": "hook",
+    "variant": "inline",
+    "source": "synthetic",
+    "evasion": "direct_syscall",
+    "target": "TestTarget.exe",
+    "extra": {
+      "preserve_bytes": 15,
+      "jmp_length": 14,
+      "trampoline_size_bytes": 4096,
+      "notes": "Expected fingerprint: 1x ALLOCVM_REMOTE (RWX trampoline, ~4KB), 1x READVM_REMOTE (prologue read), 1x WRITEVM_REMOTE (trampoline write, ~4KB), 1x PROTECTVM_REMOTE (.text \u2192 RWX for 15 bytes), 1x WRITEVM_REMOTE (15-byte detour write into .text), 1x PROTECTVM_REMOTE (.text restore). No THREAD_CREATE_REMOTE (unlike injection classes). The .text-directed WRITEVM is the primary signal separating this technique from patch_direct (data-only) and patch_rwxflip (data with protection flip)."
+    }
+  }
+}

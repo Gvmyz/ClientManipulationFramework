@@ -1,0 +1,53 @@
+{
+  "name": "injection_threadhijack_assaultcube_direct_syscall",
+  "description": "Thread-hijack DLL injection into ac_client.exe (MITRE T1055.003).",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 20,
+    "cooldownSeconds": 20
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release",
+    "commandLineTemplate": "inject-threadhijack --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\Win32\\Release\\TestDll.dll --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "threadhijack_ac",
+    "class": "injection",
+    "variant": "threadhijack",
+    "source": "synthetic",
+    "evasion": "direct_syscall",
+    "target": "AssaultCube",
+    "extra": {
+      "target_version": "1.3.0.2",
+      "target_bitness": "x86",
+      "attacker_bitness": "x86",
+      "windows_build": "26200",
+      "notes": "Uses the x86 hijack stub (22 bytes: pushfd/pushad + push dll_path + call LoadLibraryW + popad/popfd + push original_eip + ret). Hijacks the first enumerable thread in ac_client.exe. On real games this often lands on the render thread \u2014 no functional issue (LoadLibraryW returns quickly, stub jumps back to original EIP)."
+    }
+  }
+}

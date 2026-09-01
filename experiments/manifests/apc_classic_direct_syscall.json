@@ -1,0 +1,53 @@
+{
+  "name": "apc_classic_direct_syscall",
+  "description": "APC injection against TestTarget (MITRE T1055.004).",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "apc-inject --pid {targetPid} --verify --verify-wait-ms 2000 --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "apc_classic",
+    "class": "injection",
+    "variant": "apc",
+    "source": "synthetic",
+    "evasion": "direct_syscall",
+    "target": "TestTarget.exe",
+    "extra": {
+      "arch": "x64",
+      "trampoline_size_bytes": 4096,
+      "shellcode_bytes": 5,
+      "mitre_technique": "T1055.004",
+      "expected_fingerprint": "1x OpenProcess (attacker \u2192 target with hostile mask), 1x OpenThread (attacker \u2192 target thread), 1x ALLOCVM_REMOTE (RWX trampoline, ~4KB), 1x WRITEVM_REMOTE (shellcode + zeroed counter, single 4KB write), 1x KERNEL_THREATINT_TASK_QUEUEUSERAPC (or similarly-named APC dispatch event \u2014 verify empirically). Notably absent: 0x THREAD_CREATE_REMOTE (unlike LL/MM), 0x SETTHREADCONTEXT (unlike TH). This is the sharpest single case for the thesis's central claim that kernel-level events catch what thread-creation-anchored detectors miss."
+    }
+  }
+}

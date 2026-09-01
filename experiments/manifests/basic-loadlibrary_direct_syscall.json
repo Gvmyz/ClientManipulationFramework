@@ -1,0 +1,46 @@
+{
+  "name": "basic-loadlibrary_direct_syscall",
+  "description": "LoadLibraryW DLL injection against TestTarget (MITRE T1055.001).",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "inject-loadlibrary --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\x64\\Release\\TestDll.dll --call RunTest --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "loadlibrary",
+    "target": "TestTarget.exe",
+    "extra": {
+      "notes": "Allocates DLL-path buffer + WriteProcessMemory + CreateRemoteThread(LoadLibraryW)."
+    },
+    "evasion": "direct_syscall"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "name": "apc_classic_ac_direct_syscall",
+  "description": "APC injection against ac_client.exe (install-only; AC's main thread never enters alertable wait).",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 15,
+    "cooldownSeconds": 15
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release",
+    "commandLineTemplate": "apc-inject --pid {targetPid} --verify --verify-hits 0 --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "apc_classic_ac",
+    "class": "injection",
+    "variant": "apc",
+    "source": "synthetic",
+    "evasion": "direct_syscall",
+    "target": "ac_client.exe",
+    "extra": {
+      "arch": "x86",
+      "trampoline_size_bytes": 4096,
+      "shellcode_bytes": 10,
+      "mitre_technique": "T1055.004",
+      "verify_hits": 0,
+      "verify_hits_rationale": "AC's main thread uses non-alertable waits (SDL 1.2 Sleep, PeekMessage), so a queued APC never drains during the observation window. This is a real limitation of user-mode APC injection against game loops that don't opt into alertable waits \u2014 and precisely why the Early-Bird variant exists (queue the APC pre-main() when NtTestAlert would drain it). For this baseline, we measure install-detectability only.",
+      "expected_fingerprint": "1x cross-process OpenProcess (attacker \u2192 ac_client.exe with hostile mask), 1x cross-process OpenThread, 1x ALLOCVM_REMOTE (RWX trampoline, ~4KB), 1x WRITEVM_REMOTE (shellcode+counter, 4KB write), 1x KERNEL_THREATINT_TASK_QUEUEUSERAPC. Notably absent: 0x THREAD_CREATE_REMOTE, 0x SETTHREADCONTEXT."
+    }
+  }
+}

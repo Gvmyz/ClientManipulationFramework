@@ -1,0 +1,55 @@
+{
+  "name": "patch_tick_ac_direct_syscall",
+  "description": "Freeze-loop patch of AC LocalPlayer.Health at 20 Hz.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 15,
+    "cooldownSeconds": 10
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\Win32\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\Win32\\Release",
+    "commandLineTemplate": "patch-memory --pid {targetPid} --pointer-chain ac_client.exe+0x17E0A8->0xEC --bytes 64000000 --tick-count 20 --tick-interval-ms 50 --verify --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "patch_tick_ac",
+    "class": "patch",
+    "variant": "tick",
+    "source": "synthetic",
+    "evasion": "direct_syscall",
+    "target": "ac_client.exe",
+    "extra": {
+      "arch": "x86",
+      "tick_count": 20,
+      "tick_interval_ms": 50,
+      "pointer_chain": "ac_client.exe+0x17E0A8->0xEC",
+      "pointer_chain_meaning": "AC 1.3.0.2 local player struct base pointer (Silme94 offsets) + Health field at struct offset 0xEC",
+      "frozen_value": "100 (int32, little-endian 64 00 00 00) \u2014 full health, safe to freeze in bot match",
+      "expected_fingerprint": "1x cross-process READVM_REMOTE (single pointer-chain resolve reads the player struct pointer once), 20x cross-process WRITEVM_REMOTE (each tick), all with the same base_address (resolved health field). write_span_seconds \u2248 0.95, write_rate_hz \u2248 20, distinct_write_targets == 1. Notably absent: 0x ALLOCVM, 0x PROTECTVM, 0x THREAD_CREATE_REMOTE, 0x SETTHREADCONTEXT. Discriminator vs patch_aob_ac: dominated by writes not reads; vs memorypatch: 20\u00d7 the write count and nonzero write_rate_hz."
+    }
+  }
+}

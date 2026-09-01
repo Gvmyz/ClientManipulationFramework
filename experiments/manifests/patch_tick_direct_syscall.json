@@ -1,0 +1,55 @@
+{
+  "name": "patch_tick_direct_syscall",
+  "description": "Freeze-loop patch: N writes to one TestTarget address at fixed interval.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 3,
+    "cooldownSeconds": 5
+  },
+  "target": {
+    "executable": "ProcessToolkit\\x64\\Release\\TestTarget.exe",
+    "arguments": "",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "patch-memory --pid {targetPid} --address {targetInfo.value_addr} --bytes 0F270000 --tick-count 20 --tick-interval-ms 50 --verify --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "patch_tick",
+    "class": "patch",
+    "variant": "tick",
+    "source": "synthetic",
+    "evasion": "direct_syscall",
+    "target": "TestTarget.exe",
+    "extra": {
+      "arch": "x64",
+      "tick_count": 20,
+      "tick_interval_ms": 50,
+      "burst_duration_ms_approx": 1000,
+      "target_value_initial": 600,
+      "target_value_frozen": 9999,
+      "expected_fingerprint": "20x cross-process WRITEVM_REMOTE events, all with base_address == TestTarget's `value` addr, spaced ~50ms apart \u2192 write_span_seconds \u2248 0.95, write_rate_hz \u2248 20. Notably absent: 0x ALLOCVM, 0x PROTECTVM, 0x READVM_REMOTE (verify uses read only at the end), 0x THREAD_CREATE_REMOTE. Discriminator vs patch_direct: write_count = 20 (vs 1); vs patch_aob: no read burst; vs everything else: dominant WRITEVM count with distinct_write_targets == 1 (same address hit repeatedly)."
+    }
+  }
+}

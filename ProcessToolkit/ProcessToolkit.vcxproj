@@ -152,6 +152,7 @@
     <ClCompile Include="external\imgui\imgui_tables.cpp" />
     <ClCompile Include="external\imgui\imgui_widgets.cpp" />
     <ClCompile Include="src\ApcInjection.cpp" />
+    <ClCompile Include="src\DirectSyscall.cpp" />
     <ClCompile Include="src\DllInjection.cpp" />
     <ClCompile Include="src\HookInjection.cpp" />
     <ClCompile Include="src\IatHook.cpp" />
@@ -195,6 +196,7 @@
     <ClInclude Include="include\Utils.h" />
     <ClInclude Include="include\window.h" />
     <ClInclude Include="include\WinHandle.h" />
+    <ClInclude Include="src\DirectSyscall.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="imgui.ini" />

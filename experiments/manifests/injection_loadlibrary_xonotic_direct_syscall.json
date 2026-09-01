@@ -1,0 +1,49 @@
+{
+  "name": "injection_loadlibrary_xonotic_direct_syscall",
+  "description": "LoadLibraryW DLL injection into xonotic.exe (MITRE T1055.001).",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 30,
+    "cooldownSeconds": 15
+  },
+  "target": {
+    "executable": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic\\xonotic.exe",
+    "arguments": "-window -width 800 -height 600 +sv_public 0 +map warfare +bot_number 5",
+    "workingDirectory": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "ProcessToolkit\\x64\\Release\\ProcessToolkit.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release",
+    "commandLineTemplate": "inject-loadlibrary --pid {targetPid} --dll {repoRoot}\\ProcessToolkit\\x64\\Release\\TestDll.dll --call RunTest --via-direct-syscall"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "loadlibrary_xonotic",
+    "class": "injection",
+    "variant": "loadlibrary",
+    "target": "xonotic.exe",
+    "extra": {
+      "target_bitness": "x64",
+      "notes": "Attack fires ~20s after launch, during in-match steady state."
+    },
+    "evasion": "direct_syscall"
+  }
+}

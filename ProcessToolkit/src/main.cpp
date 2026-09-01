@@ -20,6 +20,7 @@
 #include "Process.h"
 #include "ProcessMemory.h"
 #include "Utils.h"
+#include "DirectSyscall.h"
 
 namespace {
 	struct Options {
@@ -75,6 +76,13 @@ namespace {
 		// When present, this overrides --address: the tool resolves the chain
 		// at runtime and uses the result as the write target.
 		std::optional<std::wstring> pointer_chain;
+
+		// --via-direct-syscall: global evasion flag. When set, every
+		// cross-process memory primitive in Memory.cpp routes through
+		// PT::DirectSyscall::Nt* wrappers, which emit the syscall
+		// instruction directly and bypass every user-mode hook on
+		// ntdll's exports. This is the RQ3 direct-syscall evasion axis.
+		bool via_direct_syscall{false};
 	};
 
 	void print_usage(const wchar_t* exe_name) {
@@ -248,6 +256,8 @@ namespace {
 				options.bytes = std::move(*bytes);
 			} else if (arg == L"--restore-protection") {
 				options.restore_protection = true;
+			} else if (arg == L"--via-direct-syscall") {
+				options.via_direct_syscall = true;
 			} else if (arg == L"--verify") {
 				options.verify = true;
 			} else if (arg == L"--tick-count" && i + 1 < argc) {
@@ -1244,6 +1254,24 @@ int wmain(int argc, wchar_t** argv) {
 	if (!options) {
 		print_usage(argv[0]);
 		return 2;
+	}
+
+	// RQ3 evasion: if --via-direct-syscall was set, resolve syscall
+	// numbers from ntdll and enable the DirectSyscall dispatch layer.
+	// Every subsequent cross-process primitive in Memory.cpp then
+	// bypasses ntdll's exports and enters the kernel directly. Failure
+	// to resolve is fatal for the run — a mixed-path run would confuse
+	// the RQ3 tier-A vs tier-B comparison.
+	if (options->via_direct_syscall) {
+		if (!PT::DirectSyscall::Initialize()) {
+			PT::Cli::print_error(
+				"--via-direct-syscall requested but ntdll syscall-number "
+				"resolution failed (likely EDR-style user-mode hook on the "
+				"target stubs; see HalosGate for a fallback strategy).");
+			return 3;
+		}
+		PT::DirectSyscall::SetEnabled(true);
+		std::wcout << L"[+] Direct-syscall dispatch enabled (RQ3 evasion)\n";
 	}
 
 	if (command == L"inspect-memory") {

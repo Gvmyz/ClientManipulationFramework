@@ -51,8 +51,18 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <mutex>
+
+// MSVC intrinsic: returns the return address of the calling function.
+// When Probe_Nt* is entered via JMP from ntdll's overwritten stub, the
+// return address on the stack is still the ORIGINAL caller of ntdll
+// (e.g. kernel32!WriteProcessMemory + N, or ntdll!RtlAllocateHeap + M).
+// This is precisely the caller-attribution info we need to verify claims
+// like "the residual NtAllocateVirtualMemory is heap growth from ntdll".
+#include <intrin.h>
+#pragma intrinsic(_ReturnAddress)
 
 // ----------------------------------------------------------------------------
 // External refs to DirectSyscall's assembly stubs. Declared with C linkage
@@ -97,11 +107,48 @@ namespace {
     std::wofstream g_log;
     std::mutex     g_log_mutex;
 
-    void log_hit(const wchar_t* name) {
+    // Resolve a return address to "modulename+0xHEXOFFSET" for the log.
+    // Used to answer "who called this Nt* function?" — for example, a
+    // residual NtAllocateVirtualMemory whose caller resolves to
+    // "ntdll.dll+..." is ntdll's own RtlAllocateHeap chain (heap growth),
+    // whereas one resolving to "ProcessToolkit.exe+..." would be a bug
+    // in our own direct-syscall integration.
+    void format_caller(void* ret_addr, wchar_t* out, size_t out_capacity) {
+        if (!ret_addr) {
+            swprintf_s(out, out_capacity, L"<null>");
+            return;
+        }
+        HMODULE mod = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                static_cast<LPCWSTR>(ret_addr),
+                &mod)) {
+            swprintf_s(out, out_capacity, L"<no-module>@0x%llX",
+                       reinterpret_cast<unsigned long long>(ret_addr));
+            return;
+        }
+        wchar_t path[MAX_PATH];
+        if (GetModuleFileNameW(mod, path, MAX_PATH) == 0) {
+            swprintf_s(out, out_capacity, L"<name-fail>@0x%llX",
+                       reinterpret_cast<unsigned long long>(ret_addr));
+            return;
+        }
+        const wchar_t* basename = wcsrchr(path, L'\\');
+        basename = basename ? basename + 1 : path;
+        const auto offset = reinterpret_cast<uintptr_t>(ret_addr) -
+                            reinterpret_cast<uintptr_t>(mod);
+        swprintf_s(out, out_capacity, L"%s+0x%llX",
+                   basename, static_cast<unsigned long long>(offset));
+    }
+
+    void log_hit(const wchar_t* name, void* ret_addr) {
         if (g_log_path.empty()) return;
+        wchar_t caller[MAX_PATH + 32];
+        format_caller(ret_addr, caller, _countof(caller));
         std::lock_guard<std::mutex> lock(g_log_mutex);
         if (g_log.is_open()) {
-            g_log << name << L'\n';
+            g_log << name << L'\t' << caller << L'\n';
             g_log.flush();
         }
     }
@@ -117,12 +164,22 @@ namespace {
     // x64 calling convention on x64 — matching ntdll's own convention.
     // ------------------------------------------------------------------------
 
+    // NOTE on _ReturnAddress(): must be called at the very top of the
+    // function, before any function call, so the return address on the
+    // stack is still the ORIGINAL caller's — the code that called
+    // ntdll's export (which our JMP intercepted). If we called any
+    // function first, _ReturnAddress() would still return the same
+    // value (it's the current frame's return address), but capturing
+    // it as the first statement removes any doubt and is the
+    // documented pattern.
+
     NTSTATUS NTAPI Probe_NtOpenProcess(
         PHANDLE ProcessHandle, ACCESS_MASK DesiredAccess,
         POBJECT_ATTRIBUTES ObjectAttributes, PtClientId* ClientId)
     {
+        void* ra = _ReturnAddress();
         g_counts.NtOpenProcess.fetch_add(1, std::memory_order_relaxed);
-        log_hit(L"NtOpenProcess");
+        log_hit(L"NtOpenProcess", ra);
         return Direct_NtOpenProcess(ProcessHandle, DesiredAccess, ObjectAttributes, ClientId);
     }
 
@@ -130,8 +187,9 @@ namespace {
         HANDLE ProcessHandle, PVOID* BaseAddress, ULONG_PTR ZeroBits,
         PSIZE_T RegionSize, ULONG AllocationType, ULONG Protect)
     {
+        void* ra = _ReturnAddress();
         g_counts.NtAllocateVirtualMemory.fetch_add(1, std::memory_order_relaxed);
-        log_hit(L"NtAllocateVirtualMemory");
+        log_hit(L"NtAllocateVirtualMemory", ra);
         return Direct_NtAllocateVirtualMemory(
             ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
     }
@@ -140,8 +198,9 @@ namespace {
         HANDLE ProcessHandle, PVOID* BaseAddress, PSIZE_T RegionSize,
         ULONG NewProtect, PULONG OldProtect)
     {
+        void* ra = _ReturnAddress();
         g_counts.NtProtectVirtualMemory.fetch_add(1, std::memory_order_relaxed);
-        log_hit(L"NtProtectVirtualMemory");
+        log_hit(L"NtProtectVirtualMemory", ra);
         return Direct_NtProtectVirtualMemory(
             ProcessHandle, BaseAddress, RegionSize, NewProtect, OldProtect);
     }
@@ -150,8 +209,9 @@ namespace {
         HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer,
         SIZE_T NumberOfBytesToWrite, PSIZE_T NumberOfBytesWritten)
     {
+        void* ra = _ReturnAddress();
         g_counts.NtWriteVirtualMemory.fetch_add(1, std::memory_order_relaxed);
-        log_hit(L"NtWriteVirtualMemory");
+        log_hit(L"NtWriteVirtualMemory", ra);
         return Direct_NtWriteVirtualMemory(
             ProcessHandle, BaseAddress, Buffer, NumberOfBytesToWrite, NumberOfBytesWritten);
     }
@@ -160,8 +220,9 @@ namespace {
         HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer,
         SIZE_T NumberOfBytesToRead, PSIZE_T NumberOfBytesRead)
     {
+        void* ra = _ReturnAddress();
         g_counts.NtReadVirtualMemory.fetch_add(1, std::memory_order_relaxed);
-        log_hit(L"NtReadVirtualMemory");
+        log_hit(L"NtReadVirtualMemory", ra);
         return Direct_NtReadVirtualMemory(
             ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead);
     }
@@ -173,8 +234,9 @@ namespace {
         SIZE_T ZeroBits, SIZE_T StackSize, SIZE_T MaximumStackSize,
         PVOID AttributeList)
     {
+        void* ra = _ReturnAddress();
         g_counts.NtCreateThreadEx.fetch_add(1, std::memory_order_relaxed);
-        log_hit(L"NtCreateThreadEx");
+        log_hit(L"NtCreateThreadEx", ra);
         return Direct_NtCreateThreadEx(
             ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle,
             StartRoutine, Argument, CreateFlags, ZeroBits, StackSize,

@@ -2,12 +2,17 @@
 # ------------------------
 # Reproduces the External_Cheats/ tree from the upstream URLs recorded in
 # docs/external-cheats/README.md. This script is intentionally read-only
-# against the network — it clones, verifies the SHA-256 of key files if
-# recorded, and reports which entries need manual attention.
+# against the network: it clones, and reports which entries still need a
+# pinned commit hash. Fill the Commit fields after the first successful
+# clone, then commit this file, and from then on the script reproduces
+# the exact same source tree.
 #
 # Run inside the lab VM (or on a host with the External_Cheats path added
 # to Windows Defender's exclusion list). Never on a machine that will
 # ship code elsewhere.
+#
+# ASCII-only. PowerShell 5.1 mis-parses em-dashes in files that are not
+# UTF-8-with-BOM, so keep this file plain ASCII.
 
 $ErrorActionPreference = "Stop"
 $root = Join-Path $PSScriptRoot ".."
@@ -17,18 +22,15 @@ if (-not (Test-Path $dst)) {
     New-Item -ItemType Directory -Path $dst | Out-Null
 }
 
-# Sources to clone. Fill in the commit hashes AFTER first successful
-# clone, then commit this file. From then on, this script reproduces the
-# exact same source tree byte-for-byte.
 $sources = @(
     @{
         Name   = "AC/AssaultHook"
         Url    = "https://github.com/matseee/AssaultHook.git"
-        Commit = ""   # TBD: record after first clone
+        Commit = ""
     },
     @{
         Name   = "AC/AssaultCubeExternalBobBuilder"
-        Url    = ""    # TBD: record upstream URL
+        Url    = "https://github.com/bobbuilder123/AssaultCubeExternalBobBuilder"
         Commit = ""
     },
     @{
@@ -50,7 +52,7 @@ foreach ($s in $sources) {
         continue
     }
     if ([string]::IsNullOrWhiteSpace($s.Url)) {
-        Write-Host "[!] $($s.Name) has no upstream URL recorded — add it to this script." -ForegroundColor Yellow
+        Write-Host "[!] $($s.Name) has no upstream URL recorded; add it to this script." -ForegroundColor Yellow
         continue
     }
     Write-Host "[+] Cloning $($s.Name) from $($s.Url)" -ForegroundColor Green
@@ -70,5 +72,5 @@ foreach ($s in $sources) {
 Write-Host ""
 Write-Host "Done. Record every SHA-256 in docs/external-cheats/README.md." -ForegroundColor Cyan
 Write-Host "For each built binary before running:" -ForegroundColor Cyan
-Write-Host "  Get-FileHash <exe> -Algorithm SHA256" -ForegroundColor Cyan
+Write-Host "  Get-FileHash EXE_PATH -Algorithm SHA256" -ForegroundColor Cyan
 Write-Host "  then paste into README.md, then look up on VirusTotal." -ForegroundColor Cyan

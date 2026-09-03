@@ -42,10 +42,22 @@
 // ---------------
 // Plain UTF-8 narrow text, one line per invocation:
 //   FunctionName<TAB>modulename+0xHEXOFFSET
-// UTF-8 avoids the std::wofstream codec fragility we hit on Windows where
-// the default locale's wide->narrow codec silently dropped writes on
-// certain code paths, producing empty log files even when the atomic
-// counters showed invocations.
+//
+// WHY WE WRITE VIA CreateFileW / WriteFile INSTEAD OF C++ STREAMS
+// ----------------------------------------------------------------
+// We first tried std::wofstream, then std::ofstream + UTF-8. Both left
+// the log file empty even though the atomic counters proved the probe
+// functions had fired and log_hit() had been called. C++ streams add
+// buffering + locale + codec layers that any of the following can break
+// silently in this context: the atexit ordering vs. our probe uninstall,
+// the CRT's own reentrancy while our ntdll hooks are active, or a bad
+// interaction between our hook install/uninstall page-protection dance
+// and the CRT's internal I/O locks. Rather than diagnose which of those
+// swallowed the writes, we bypass every layer. CreateFileW returns a
+// raw HANDLE, WriteFile calls straight into ntdll, and FlushFileBuffers
+// forces the write to disk before the next line. No CRT, no C++ stream,
+// no codec, no buffering — a single WriteFile per call.
+
 //
 // SESSION GATING
 // --------------
@@ -67,7 +79,6 @@
 #include <cstring>
 #include <cstdio>
 #include <atomic>
-#include <fstream>
 #include <mutex>
 #include <string>
 
@@ -119,10 +130,12 @@ namespace {
     HookRecord g_records[6]{};
 
     PT::UsermodeHookProbe::HitCounts g_counts;
-    std::wstring       g_log_path;
-    std::ofstream      g_log;              // narrow byte stream, UTF-8 payload
-    std::mutex         g_log_mutex;
-    std::atomic<bool>  g_session_active{false};
+    std::wstring        g_log_path;
+    HANDLE              g_log_handle{INVALID_HANDLE_VALUE};  // CreateFileW result
+    std::mutex          g_log_mutex;
+    std::atomic<bool>   g_session_active{false};
+    std::atomic<uint64_t> g_log_lines_written{0};   // for diagnostics
+    std::atomic<uint64_t> g_log_lines_dropped{0};   // for diagnostics
 
     // Convert a wide string to UTF-8 for the narrow log stream. Empty on
     // failure or empty input. Uses a stack scratch buffer sized for the
@@ -183,14 +196,39 @@ namespace {
         // read before Uninstall, so they naturally reflect only attack
         // traffic; this gate makes the log agree.
         if (!g_session_active.load(std::memory_order_relaxed)) return;
+
         wchar_t caller[MAX_PATH + 32];
         format_caller(ret_addr, caller, _countof(caller));
         const std::string name_utf8   = to_utf8(name);
         const std::string caller_utf8 = to_utf8(caller);
+
+        // Compose "name<TAB>caller\n" into a single small stack buffer so
+        // WriteFile sees one atomic write per hook call.
+        char line[MAX_PATH * 4 + 128];
+        const int line_len = _snprintf_s(
+            line, sizeof(line), _TRUNCATE,
+            "%s\t%s\n", name_utf8.c_str(), caller_utf8.c_str());
+        if (line_len <= 0) {
+            g_log_lines_dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
         std::lock_guard<std::mutex> lock(g_log_mutex);
-        if (g_log.is_open()) {
-            g_log << name_utf8 << '\t' << caller_utf8 << '\n';
-            g_log.flush();
+        if (g_log_handle == INVALID_HANDLE_VALUE) {
+            g_log_lines_dropped.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        DWORD written = 0;
+        const BOOL ok = WriteFile(
+            g_log_handle, line, static_cast<DWORD>(line_len),
+            &written, nullptr);
+        if (ok && written == static_cast<DWORD>(line_len)) {
+            g_log_lines_written.fetch_add(1, std::memory_order_relaxed);
+            // Force to disk immediately so a crash / abnormal exit does
+            // not lose the record.
+            FlushFileBuffers(g_log_handle);
+        } else {
+            g_log_lines_dropped.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -362,11 +400,28 @@ namespace PT::UsermodeHookProbe {
         }
 
         g_log_path = log_path;
+        g_log_lines_written.store(0, std::memory_order_relaxed);
+        g_log_lines_dropped.store(0, std::memory_order_relaxed);
         if (!g_log_path.empty()) {
-            // MSVC provides an ofstream::open overload taking const wchar_t*
-            // so we can carry g_log_path as std::wstring without a
-            // wide-narrow filename conversion.
-            g_log.open(g_log_path.c_str(), std::ios::out | std::ios::trunc);
+            // CREATE_ALWAYS = truncate if exists / create if not.
+            // FILE_SHARE_READ so a viewer (e.g. Get-Content -Wait) can
+            // tail the file while a run is in progress.
+            g_log_handle = CreateFileW(
+                g_log_path.c_str(),
+                GENERIC_WRITE,
+                FILE_SHARE_READ,
+                nullptr,
+                CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH,
+                nullptr);
+            if (g_log_handle == INVALID_HANDLE_VALUE) {
+                // Non-fatal: probe still works, just no per-call log.
+                // Print the error so we can diagnose if it recurs.
+                fwprintf(stderr,
+                    L"[probe] CreateFileW failed for %s (GLE=%lu); "
+                    L"counters will still work but the log will be empty.\n",
+                    g_log_path.c_str(), GetLastError());
+            }
         }
 
         // Install all six. If any fail, we still return false so main.cpp
@@ -387,7 +442,18 @@ namespace PT::UsermodeHookProbe {
         g_session_active.store(false, std::memory_order_relaxed);
         for (size_t i = 0; i < 6; ++i) uninstall_one(i);
         std::lock_guard<std::mutex> lock(g_log_mutex);
-        if (g_log.is_open()) g_log.close();
+        if (g_log_handle != INVALID_HANDLE_VALUE) {
+            FlushFileBuffers(g_log_handle);
+            CloseHandle(g_log_handle);
+            g_log_handle = INVALID_HANDLE_VALUE;
+        }
+    }
+
+    uint64_t GetLogLinesWritten() {
+        return g_log_lines_written.load(std::memory_order_relaxed);
+    }
+    uint64_t GetLogLinesDropped() {
+        return g_log_lines_dropped.load(std::memory_order_relaxed);
     }
 
     const HitCounts&   GetCounts()   { return g_counts; }

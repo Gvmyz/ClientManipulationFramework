@@ -114,4 +114,12 @@ namespace PT::UsermodeHookProbe {
     // counts reflect only the attack code that runs afterwards.
     void ResetCounts();
 
+    // Diagnostics for the per-call log file: how many WriteFile calls
+    // succeeded, and how many were dropped (composition failure, handle
+    // invalid, or WriteFile returned an error). Useful when the log file
+    // ends up empty despite non-zero hit counters — the ratio tells you
+    // whether we even attempted to write.
+    uint64_t GetLogLinesWritten();
+    uint64_t GetLogLinesDropped();
+
 }  // namespace PT::UsermodeHookProbe

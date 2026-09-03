@@ -1363,7 +1363,9 @@ int wmain(int argc, wchar_t** argv) {
 		           << L"  NtWriteVirtualMemory:    " << c.NtWriteVirtualMemory.load() << L"\n"
 		           << L"  NtReadVirtualMemory:     " << c.NtReadVirtualMemory.load() << L"\n"
 		           << L"  NtCreateThreadEx:        " << c.NtCreateThreadEx.load() << L"\n"
-		           << L"  (log: " << PT::UsermodeHookProbe::GetLogPath() << L")\n";
+		           << L"  (log: " << PT::UsermodeHookProbe::GetLogPath() << L")\n"
+		           << L"  log lines written:       " << PT::UsermodeHookProbe::GetLogLinesWritten() << L"\n"
+		           << L"  log lines dropped:       " << PT::UsermodeHookProbe::GetLogLinesDropped() << L"\n";
 		PT::UsermodeHookProbe::Uninstall();
 	}
 

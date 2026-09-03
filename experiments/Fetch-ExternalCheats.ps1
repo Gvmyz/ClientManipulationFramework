@@ -26,22 +26,22 @@ $sources = @(
     @{
         Name   = "AC/AssaultHook"
         Url    = "https://github.com/matseee/AssaultHook.git"
-        Commit = ""
+        Commit = "7776224"
     },
     @{
         Name   = "AC/AssaultCubeExternalBobBuilder"
         Url    = "https://github.com/bobbuilder123/AssaultCubeExternalBobBuilder"
-        Commit = ""
+        Commit = "e7a872f"
     },
     @{
         Name   = "Injectors/ExtremeInjector"
         Url    = "https://github.com/master131/ExtremeInjector.git"
-        Commit = ""
+        Commit = "05087bb"
     },
     @{
         Name   = "Injectors/Xenos"
         Url    = "https://github.com/DarthTon/Xenos.git"
-        Commit = ""
+        Commit = "4bd7399"
     }
 )
 

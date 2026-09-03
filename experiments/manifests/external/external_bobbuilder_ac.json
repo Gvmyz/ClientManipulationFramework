@@ -1,0 +1,50 @@
+{
+  "name": "external_bobbuilder_ac",
+  "description": "External patch/aimbot (AssaultCubeExternalBobBuilder) against ac_client.exe. External validator; no self-injection. Operator-driven: the runner enters external-attacker mode, prints the AC PID, and waits for the operator to launch AssaultCubeAimbot.exe from a separate shell, let it operate against AC for ~30 seconds, close it, then press Enter in the runner shell to trigger cooldown.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 20,
+    "cooldownSeconds": 15
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "external_bobbuilder_ac",
+    "class": "patch",
+    "variant": "external",
+    "source": "external",
+    "evasion": null,
+    "target": "AssaultCube",
+    "extra": {
+      "target_version": "1.3.0.2",
+      "target_bitness": "x86",
+      "attacker_bitness": "x86",
+      "windows_build": "26200",
+      "provenance": "See docs/external-cheats/README.md — AC/AssaultCubeExternalBobBuilder",
+      "operator_commands": "In a second PowerShell, after the runner prints the target PID, launch: & 'External_Cheats\\AC\\AssaultCubeExternalBobBuilder\\Release\\AssaultCubeAimbot.exe'  ; interact for ~30s; close the overlay window; return to the runner shell and press Enter.",
+      "notes": "No manipulation section on purpose — BobBuilder is an ImGui overlay that stays running until closed, so the runner cannot Start-Process -Wait on it. External-attacker mode is the correct model."
+    }
+  }
+}

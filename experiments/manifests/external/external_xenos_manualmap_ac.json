@@ -1,0 +1,54 @@
+{
+  "name": "external_xenos_manualmap_ac",
+  "description": "Xenos manual-mapping our synthetic TestDll into ac_client.exe. External delivery mechanism; payload is our DLL to isolate the injector's fingerprint from the payload's behaviour.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 20,
+    "cooldownSeconds": 15
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "External_Cheats\\Injectors\\Xenos\\bin\\Release\\XenosCLI.exe",
+    "workingDirectory": "External_Cheats\\Injectors\\Xenos\\bin\\Release",
+    "commandLineTemplate": "--process ac_client.exe --image {repoRoot}\\ProcessToolkit\\Win32\\Release\\TestDll.dll --mode ManualMap"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "external_xenos_manualmap_ac",
+    "class": "injection",
+    "variant": "manualmap",
+    "source": "external",
+    "evasion": null,
+    "target": "AssaultCube",
+    "extra": {
+      "target_version": "1.3.0.2",
+      "target_bitness": "x86",
+      "attacker_bitness": "x86",
+      "windows_build": "26200",
+      "provenance": "See docs/external-cheats/README.md — Injectors/Xenos",
+      "notes": "Xenos is the external delivery mechanism; the payload is our own TestDll so we can compare the Xenos manualmap fingerprint against our synthetic inject-manualmap on the same target. Any difference is attributable to the injector, not to the payload."
+    }
+  }
+}

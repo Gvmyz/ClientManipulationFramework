@@ -1,0 +1,54 @@
+{
+  "name": "external_assaulthook_ac",
+  "description": "matseee AssaultHook self-injecting DLL cheat against ac_client.exe. External validator; injection + hook + patch classes.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 20,
+    "cooldownSeconds": 20
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "manipulation": {
+    "executable": "External_Cheats\\AC\\AssaultHook\\src\\Release\\AssaultHook.exe",
+    "workingDirectory": "External_Cheats\\AC\\AssaultHook\\src\\Release",
+    "commandLineTemplate": ""
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "external_assaulthook_ac",
+    "class": "injection",
+    "variant": "loadlibrary",
+    "source": "external",
+    "evasion": null,
+    "target": "AssaultCube",
+    "extra": {
+      "target_version": "1.3.0.2",
+      "target_bitness": "x86",
+      "attacker_bitness": "x86",
+      "windows_build": "26200",
+      "provenance": "See docs/external-cheats/README.md — AC/AssaultHook (matseee)",
+      "notes": "Self-injecting DLL. Attacker binary finds AC, injects its DLL, then may exit. Once injected, the DLL performs its own hook + patch operations from inside the target — those will show as intra-process activity, not as cross-process ETW-TI events. Ground-truth label = injection variant.loadlibrary based on the outer injection pattern; the post-injection hook/patch activity is not directly observable via our cross-process detectors."
+    }
+  }
+}

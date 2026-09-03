@@ -40,10 +40,24 @@
 //
 // LOG FILE FORMAT
 // ---------------
-// Plain UTF-16 text, one line per invocation, function name only. This
-// is enough to prove which functions fired and how many times, without
-// spending output-buffer bandwidth per call (relevant when the probe
-// might see hundreds of hook fires under a manualmap attack).
+// Plain UTF-8 narrow text, one line per invocation:
+//   FunctionName<TAB>modulename+0xHEXOFFSET
+// UTF-8 avoids the std::wofstream codec fragility we hit on Windows where
+// the default locale's wide->narrow codec silently dropped writes on
+// certain code paths, producing empty log files even when the atomic
+// counters showed invocations.
+//
+// SESSION GATING
+// --------------
+// The log is silent outside the "attack window". Install_one and
+// uninstall_one themselves call VirtualProtect to patch/unpatch each
+// ntdll stub, so once the NtProtect hook is installed those calls would
+// otherwise get logged as if they were attack traffic. A session flag
+// (g_session_active) opens the log for writes only between ResetCounts
+// and Uninstall, which is exactly the attack window. Counters are
+// unaffected by the flag; they are already zeroed at ResetCounts and
+// read before Uninstall, so they naturally reflect only the attack
+// window without any gating.
 // ============================================================================
 
 #include "UsermodeHookProbe.h"
@@ -52,8 +66,10 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <atomic>
 #include <fstream>
 #include <mutex>
+#include <string>
 
 // MSVC intrinsic: returns the return address of the calling function.
 // When Probe_Nt* is entered via JMP from ntdll's overwritten stub, the
@@ -103,9 +119,26 @@ namespace {
     HookRecord g_records[6]{};
 
     PT::UsermodeHookProbe::HitCounts g_counts;
-    std::wstring   g_log_path;
-    std::wofstream g_log;
-    std::mutex     g_log_mutex;
+    std::wstring       g_log_path;
+    std::ofstream      g_log;              // narrow byte stream, UTF-8 payload
+    std::mutex         g_log_mutex;
+    std::atomic<bool>  g_session_active{false};
+
+    // Convert a wide string to UTF-8 for the narrow log stream. Empty on
+    // failure or empty input. Uses a stack scratch buffer sized for the
+    // longest string we ever pass here (Nt* names <= 32, caller strings
+    // MAX_PATH + a hex offset). Well under a KB total.
+    std::string to_utf8(const wchar_t* wstr) {
+        if (!wstr || !*wstr) return {};
+        char scratch[MAX_PATH * 4 + 64];  // UTF-8 worst case is 4 bytes per WCHAR
+        const int written = WideCharToMultiByte(
+            CP_UTF8, 0, wstr, -1,
+            scratch, static_cast<int>(sizeof(scratch)),
+            nullptr, nullptr);
+        if (written <= 1) return {};
+        // 'written' includes the terminating NUL from the -1 length; drop it.
+        return std::string(scratch, static_cast<size_t>(written - 1));
+    }
 
     // Resolve a return address to "modulename+0xHEXOFFSET" for the log.
     // Used to answer "who called this Nt* function?" — for example, a
@@ -144,11 +177,19 @@ namespace {
 
     void log_hit(const wchar_t* name, void* ret_addr) {
         if (g_log_path.empty()) return;
+        // Session gate: silence writes outside the attack window so
+        // install_one / uninstall_one's own VirtualProtect calls do not
+        // pollute the log. Counters are already zeroed at ResetCounts and
+        // read before Uninstall, so they naturally reflect only attack
+        // traffic; this gate makes the log agree.
+        if (!g_session_active.load(std::memory_order_relaxed)) return;
         wchar_t caller[MAX_PATH + 32];
         format_caller(ret_addr, caller, _countof(caller));
+        const std::string name_utf8   = to_utf8(name);
+        const std::string caller_utf8 = to_utf8(caller);
         std::lock_guard<std::mutex> lock(g_log_mutex);
         if (g_log.is_open()) {
-            g_log << name << L'\t' << caller << L'\n';
+            g_log << name_utf8 << '\t' << caller_utf8 << '\n';
             g_log.flush();
         }
     }
@@ -322,7 +363,10 @@ namespace PT::UsermodeHookProbe {
 
         g_log_path = log_path;
         if (!g_log_path.empty()) {
-            g_log.open(g_log_path, std::ios::out | std::ios::trunc);
+            // MSVC provides an ofstream::open overload taking const wchar_t*
+            // so we can carry g_log_path as std::wstring without a
+            // wide-narrow filename conversion.
+            g_log.open(g_log_path.c_str(), std::ios::out | std::ios::trunc);
         }
 
         // Install all six. If any fail, we still return false so main.cpp
@@ -338,7 +382,11 @@ namespace PT::UsermodeHookProbe {
     }
 
     void Uninstall() {
+        // Close the attack window first so uninstall_one's own
+        // VirtualProtect calls do not appear in the log.
+        g_session_active.store(false, std::memory_order_relaxed);
         for (size_t i = 0; i < 6; ++i) uninstall_one(i);
+        std::lock_guard<std::mutex> lock(g_log_mutex);
         if (g_log.is_open()) g_log.close();
     }
 
@@ -352,6 +400,9 @@ namespace PT::UsermodeHookProbe {
         g_counts.NtWriteVirtualMemory.store(0);
         g_counts.NtReadVirtualMemory.store(0);
         g_counts.NtCreateThreadEx.store(0);
+        // Open the attack window for the log. Everything logged from here
+        // until Uninstall() is attributable to attack code.
+        g_session_active.store(true, std::memory_order_relaxed);
     }
 
 }  // namespace PT::UsermodeHookProbe

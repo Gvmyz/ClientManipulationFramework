@@ -104,7 +104,9 @@ $projects = @(
         #
         # Modern-MSVC conformance breaks BlackBone as vendored:
         #   * std::addressof, std::inserter no longer come in transitively
-        #     from <stddef.h>; force-include <memory> and <iterator>.
+        #     from <stddef.h>; force-include a wrapper that includes <memory>
+        #     and <iterator> only for C++. BlackBone also compiles LDasm.c
+        #     as C, where including C++ STL headers causes STL1003.
         #   * /std:c++latest implies /permissive- on recent MSVC, enabling
         #     strict string literal checks and stricter template parsing.
         #     Append /permissive and then /Zc:strictStrings- so the project
@@ -115,7 +117,7 @@ $projects = @(
         Config       = "Release"
         Platform     = "Win32"
         Toolset      = "v145"
-        CLPrepend    = '/FI"memory" /FI"iterator"'
+        CLPrepend    = '/FI"{0}"' -f (Join-Path $PSScriptRoot 'build-compat\XenosIncludes.h')
         CLAppend     = '/permissive /Zc:strictStrings-'
         ExtraMSBuild = @()
         ProjectDir   = "Injectors\Xenos"

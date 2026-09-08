@@ -31,51 +31,81 @@ $root = Join-Path $PSScriptRoot ".."
 $ext  = Join-Path $root "External_Cheats"
 
 # One entry per external project. Fields:
-#   Name        - reporting label
-#   Solution    - path to .sln, relative to External_Cheats\
-#   Config      - MSBuild /p:Configuration value
-#   Platform    - MSBuild /p:Platform value (label as declared in .sln)
-#   Toolset     - MSBuild /p:PlatformToolset value
-#   CLPrepend   - arguments prepended to every CL invocation for this
-#                 project. Use `/I "path"` (absolute) and `/std:c++17`
-#                 style flags. Empty string = no overrides.
+#   Name           - reporting label
+#   Solution       - path to .sln, relative to External_Cheats\
+#   Config         - MSBuild /p:Configuration value
+#   Platform       - MSBuild /p:Platform value (label as declared in .sln;
+#                    verify with `Select-String "SolutionConfigurationPlatforms"
+#                    -Context 0,6` before adding a new project)
+#   Toolset        - MSBuild /p:PlatformToolset value
+#   CLPrepend      - arguments prepended to every CL invocation for this
+#                    project. Use `/I "path"` (absolute), `/std:c++17`,
+#                    `/FI"header"` (force include), or `/Zc:foo-` (relax
+#                    conformance). Empty string = no overrides.
+#   ExtraMSBuild   - additional /p:Key=Value MSBuild properties for this
+#                    project, as an array of strings. Empty array = none.
+#                    Use for project-file-level overrides (PCH, forced
+#                    includes) that CLPrepend can't reach because the
+#                    project sets them later in the CL command line.
 $projects = @(
     @{
-        Name       = "AC / AssaultCubeExternalBobBuilder"
-        Solution   = "AC\AssaultCubeExternalBobBuilder\AssaultCubeAimbot.sln"
-        Config     = "Release"
-        Platform   = "x86"
-        Toolset    = "v145"
-        CLPrepend  = '/I "$(ProjectDirAbs)\imgui" /I "$(ProjectDirAbs)\imgui\backends" /std:c++17'
-        ProjectDir = "AC\AssaultCubeExternalBobBuilder"
+        Name         = "AC / AssaultCubeExternalBobBuilder"
+        Solution     = "AC\AssaultCubeExternalBobBuilder\AssaultCubeAimbot.sln"
+        Config       = "Release"
+        Platform     = "x86"
+        Toolset      = "v145"
+        CLPrepend    = '/I "$(ProjectDirAbs)\imgui" /I "$(ProjectDirAbs)\imgui\backends" /std:c++17'
+        ExtraMSBuild = @()
+        ProjectDir   = "AC\AssaultCubeExternalBobBuilder"
     },
     @{
-        # matseee AssaultHook — builds both the cheat DLL (from dllmain.cpp)
-        # and the bundled injector.exe from the same solution.
+        # matseee AssaultHook. Builds both the cheat DLL and the bundled
+        # injector.exe from the same solution.
         #
-        # Platform label: the .sln declares "x86", not "Win32" (same quirk
-        # as BobBuilder's .sln). MSBuild's MSB4126 fires when we pass a
-        # label the .sln does not declare. Verify with:
-        #   Get-Content <sln> | Select-String "SolutionConfigurationPlatforms" -Context 0,6
-        Name       = "AC / AssaultHook (DLL + injector)"
-        Solution   = "AC\AssaultHook\src\AssaultHook.sln"
-        Config     = "Release"
-        Platform   = "x86"
-        Toolset    = "v145"
-        CLPrepend  = ''
-        ProjectDir = "AC\AssaultHook\src"
+        # PCH quirk: the vcxproj sets PrecompiledHeader=Use with pch.h, but
+        # the source .cpp files (acFunctions.cpp, dllmain.cpp, aimbot.cpp,
+        # ...) do not #include "pch.h", so every non-pch.cpp file fails
+        # with C1010. Override at MSBuild time by disabling PCH entirely
+        # (-p:PrecompiledHeader=NotUsing) and clearing any forced-include
+        # of pch.h (-p:ForcedIncludeFiles=). Prevents having to touch the
+        # cloned upstream tree.
+        Name         = "AC / AssaultHook (DLL + injector)"
+        Solution     = "AC\AssaultHook\src\AssaultHook.sln"
+        Config       = "Release"
+        Platform     = "x86"
+        Toolset      = "v145"
+        CLPrepend    = ''
+        ExtraMSBuild = @(
+            "/p:PrecompiledHeader=NotUsing",
+            "/p:ForcedIncludeFiles="
+        )
+        ProjectDir   = "AC\AssaultHook\src"
     },
     @{
-        # DarthTon Xenos — user-mode manual-mapping injector.
-        # Build the x86 version because AC is 32-bit; Xenos's bitness must
-        # match the target. Add an x64 entry later for Xonotic if needed.
-        Name       = "Injectors / Xenos (x86)"
-        Solution   = "Injectors\Xenos\Xenos.sln"
-        Config     = "Release"
-        Platform   = "Win32"
-        Toolset    = "v145"
-        CLPrepend  = ''
-        ProjectDir = "Injectors\Xenos"
+        # DarthTon Xenos, user-mode manual-mapping injector, x86 to match
+        # AC's bitness. Vendors BlackBone as a submodule at ext/BlackBone/.
+        # Fetch-ExternalCheats.ps1 initialises submodules; if you cloned by
+        # hand, run: git submodule update --init --recursive
+        #
+        # Modern-MSVC conformance breaks BlackBone as vendored:
+        #   * std::addressof, std::inserter no longer come in transitively
+        #     from <stddef.h>; force-include <memory> and <iterator>.
+        #   * /Zc:strictStrings (default on modern MSVC) rejects the
+        #     const char[N] -> char* passes in the WoW64 shims; relax
+        #     with /Zc:strictStrings-.
+        #   * /permissive- (default on modern MSVC) enforces two-phase
+        #     template lookup that BlackBone predates; /permissive relaxes
+        #     it to the pre-VS2017 rules the code was written against.
+        # None of these change the resulting binary's behaviour; they just
+        # let the older code compile under the newer compiler defaults.
+        Name         = "Injectors / Xenos (x86)"
+        Solution     = "Injectors\Xenos\Xenos.sln"
+        Config       = "Release"
+        Platform     = "Win32"
+        Toolset      = "v145"
+        CLPrepend    = '/Zc:strictStrings- /permissive /FI"memory" /FI"iterator"'
+        ExtraMSBuild = @()
+        ProjectDir   = "Injectors\Xenos"
     }
     # ExtremeInjector deliberately omitted: its C++/CLI project targets old
     # .NET runtimes bundled as .zip files under VC/, and modern-toolset
@@ -112,11 +142,22 @@ foreach ($p in $projects) {
     Write-Host "CL prepend: $clPrepend" -ForegroundColor DarkGray
 
     try {
-        & $msbuild $sln `
-            /p:Configuration=$($p.Config) `
-            /p:Platform=$($p.Platform) `
-            /p:PlatformToolset=$($p.Toolset) `
-            /nologo /v:minimal
+        # Base MSBuild arguments plus any per-project extras. Splat via an
+        # array so PowerShell keeps the /p:Key=Value tokens as one argument
+        # each (Start-Process-style call operator).
+        $msbuildArgs = @(
+            $sln,
+            "/p:Configuration=$($p.Config)",
+            "/p:Platform=$($p.Platform)",
+            "/p:PlatformToolset=$($p.Toolset)"
+        )
+        if ($p.ContainsKey("ExtraMSBuild") -and $p.ExtraMSBuild.Count -gt 0) {
+            $msbuildArgs += $p.ExtraMSBuild
+            Write-Host "Extra MSBuild args: $($p.ExtraMSBuild -join ' ')" -ForegroundColor DarkGray
+        }
+        $msbuildArgs += @("/nologo", "/v:minimal")
+
+        & $msbuild @msbuildArgs
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[!] Build FAILED for $($p.Name) (exit $LASTEXITCODE)" -ForegroundColor Red
         } else {

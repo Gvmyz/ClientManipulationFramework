@@ -65,6 +65,13 @@
                 CLAppend = '/permissive /Zc:strictStrings-'
                 Properties = @()
                 Artifacts = @('build/Win32/Release/Xenos.exe')
+            }, @{
+                System = 'MSBuild'; Project = 'Xenos.sln'
+                Config = 'Release'; Platform = 'x64'
+                CLPrepend = '/FI"$(ExperimentsDir)\build-compat\XenosIncludes.h"'
+                CLAppend = '/permissive /Zc:strictStrings- /D_CRT_SECURE_NO_WARNINGS'
+                Properties = @()
+                Artifacts = @('build/x64/Release/Xenos64.exe')
             })
         },
         @{
@@ -93,8 +100,14 @@
             Name = 'Injectors/ExtremeInjector'
             Url = 'https://github.com/master131/ExtremeInjector.git'
             Commit = '05087bb7c592e319f6ff0e6850fb1e1dc100ae6e'
-            Kind = 'Git'; Legacy = $true
-            Builds = @() # Archived candidate: old C++/CLI dependency chain.
+            Kind = 'Git'; Legacy = $false
+            # This repository contains support files, NOT injector source.
+            ReleaseUrl = 'https://github.com/master131/ExtremeInjector/releases/download/v3.7.3/Extreme.Injector.v3.7.3.-.by.master131.rar'
+            Version = '3.7.3'
+            Builds = @(@{
+                System = 'Prebuilt'; Provenance = 'release/provenance.json'
+                Artifacts = @('release/Extreme Injector v3.exe')
+            })
         }
     )
 }

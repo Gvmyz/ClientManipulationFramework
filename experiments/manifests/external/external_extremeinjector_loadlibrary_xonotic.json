@@ -1,0 +1,73 @@
+{
+  "name": "external_extremeinjector_loadlibrary_xonotic",
+  "description": "ExtremeInjector Standard delivery of the same x64 TestDll used in this game's other injector cells. Native-loader umbrella label; specific loader path differs by injector. Manual operator capture.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 30,
+    "cooldownSeconds": 15
+  },
+  "target": {
+    "executable": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic\\xonotic.exe",
+    "arguments": "-window -width 800 -height 600 +sv_public 0 +map warfare +bot_number 5",
+    "workingDirectory": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "external_extremeinjector_loadlibrary_xonotic",
+    "class": "injection",
+    "variant": "loadlibrary",
+    "source": "external",
+    "evasion": null,
+    "target": "Xonotic",
+    "extra": {
+      "target_version": "0.8.6",
+      "target_bitness": "x64",
+      "attacker_bitness": "managed injector with architecture-matched target support; record observed processes",
+      "tool_name": "master131/ExtremeInjector",
+      "tool_version": "3.7.3",
+      "source_url": "https://github.com/master131/ExtremeInjector/releases/tag/v3.7.3",
+      "source_commit": null,
+      "source_accessed": "2026-09-08",
+      "download_date": null,
+      "sha256": null,
+      "windows_build": null,
+      "implementation_family": "extreme-injector",
+      "validation_status": "binary_verification_and_pilot_required",
+      "intended_active_seconds": "30",
+      "provenance": "docs/external-cheats/README.md; fill actual tool/game hashes and runtime version before collection.",
+      "attacker_executable": "External_Cheats\\Injectors\\ExtremeInjector\\release\\Extreme Injector v3.exe",
+      "operator_commands": "Launch Extreme Injector v3.exe and select the exact printed target PID (x64). Add only ProcessToolkit\\x64\\Release\\TestDll.dll. Choose Standard in Settings. Leave export/init function empty. Scrambling None; Secure Mode, Stealth Inject, Auto-Inject, Erase PE, Hide Module and automatic closing OFF. Record settings, inject ONCE and record status plus the target's TestDll attach marker. Observe 30 seconds from injection, close the injector, then press Enter here. Keep the game alive for cooldown.",
+      "success_criterion": "Record injector result and [TestDll] DLL Loaded... from this target PID in DebugView; target remains alive. Keep DebugView Win32 capture configured identically for paired runs and controls. A classifier prediction is not success evidence.",
+      "notes": "Fresh target for every attempt. Never inject twice into one process. Same DLL hash within each game's four cells. Keep game running through cooldown. See docs/external-cheats/runbook.md.",
+      "payload_family": "cmf-testdll",
+      "payload_path": "ProcessToolkit\\x64\\Release\\TestDll.dll",
+      "payload_sha256": null,
+      "delivery_lineage": "darthton-manual-mapper (shared ancestry; group conservatively for family holdout)",
+      "payload_protocol": "DLL_PROCESS_ATTACH only. Leave export/init function empty; do not call RunTest.",
+      "injector_mode": "Standard",
+      "settings_sha256": null,
+      "target_sha256": null,
+      "support_repository_commit": "05087bb7c592e319f6ff0e6850fb1e1dc100ae6e",
+      "binary_source_status": "Official prebuilt release; source unavailable. Host security blocked archive inspection on 2026-09-08. Stage and verify separately in the lab.",
+      "runtime_requirement": ".NET Framework 4-compatible runtime"
+    }
+  }
+}

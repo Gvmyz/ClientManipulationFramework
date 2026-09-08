@@ -1,6 +1,6 @@
 {
-  "name": "external_xenos_loadlibrary_ac",
-  "description": "Xenos Native inject delivery of the same x86 TestDll used in this game's other injector cells. Native-loader umbrella label; specific loader path differs by injector. Manual operator capture.",
+  "name": "external_xenos_loadlibrary_xonotic",
+  "description": "Xenos Native inject delivery of the same x64 TestDll used in this game's other injector cells. Native-loader umbrella label; specific loader path differs by injector. Manual operator capture.",
   "providers": [
     {
       "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
@@ -17,13 +17,13 @@
   ],
   "sessionName": "TISession",
   "timings": {
-    "warmupSeconds": 20,
+    "warmupSeconds": 30,
     "cooldownSeconds": 15
   },
   "target": {
-    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
-    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
-    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+    "executable": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic\\xonotic.exe",
+    "arguments": "-window -width 800 -height 600 +sv_public 0 +map warfare +bot_number 5",
+    "workingDirectory": "C:\\Users\\lab\\Saved Games\\xonotic-0.8.6\\Xonotic"
   },
   "telemetry": {
     "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
@@ -31,16 +31,16 @@
   },
   "metadata": {
     "label": "attack",
-    "technique": "external_xenos_loadlibrary_ac",
+    "technique": "external_xenos_loadlibrary_xonotic",
     "class": "injection",
     "variant": "loadlibrary",
     "source": "external",
     "evasion": null,
-    "target": "AssaultCube",
+    "target": "Xonotic",
     "extra": {
-      "target_version": "1.3.0.2",
-      "target_bitness": "x86",
-      "attacker_bitness": "x86",
+      "target_version": "0.8.6",
+      "target_bitness": "x64",
+      "attacker_bitness": "x64",
       "tool_name": "DarthTon/Xenos",
       "tool_version": "4bd7399bf200f9e91f411402a3c3ac7fa4623c7e",
       "source_url": "https://github.com/DarthTon/Xenos",
@@ -53,12 +53,12 @@
       "validation_status": "pilot_required",
       "intended_active_seconds": "30",
       "provenance": "docs/external-cheats/README.md; fill actual tool/game hashes and runtime version before collection.",
-      "attacker_executable": "External_Cheats\\Injectors\\Xenos\\build\\Win32\\Release\\Xenos.exe",
-      "operator_commands": "Launch Xenos.exe and select the exact printed target PID (x86). Add only ProcessToolkit\\Win32\\Release\\TestDll.dll. Choose Native inject in Advanced. Leave export/init function empty. Use user mode; thread hijack, unlinking, header erasure and kernel options OFF. Record settings, inject ONCE and record status plus the target's TestDll attach marker. Observe 30 seconds from injection, close the injector, then press Enter here. Keep the game alive for cooldown.",
+      "attacker_executable": "External_Cheats\\Injectors\\Xenos\\build\\x64\\Release\\Xenos64.exe",
+      "operator_commands": "Launch Xenos64.exe and select the exact printed target PID (x64). Add only ProcessToolkit\\x64\\Release\\TestDll.dll. Choose Native inject in Advanced. Leave export/init function empty. Use user mode; thread hijack, unlinking, header erasure and kernel options OFF. Record settings, inject ONCE and record status plus the target's TestDll attach marker. Observe 30 seconds from injection, close the injector, then press Enter here. Keep the game alive for cooldown.",
       "success_criterion": "Record injector result and [TestDll] DLL Loaded... from this target PID in DebugView; target remains alive. Keep DebugView Win32 capture configured identically for paired runs and controls. A classifier prediction is not success evidence.",
       "notes": "Fresh target for every attempt. Never inject twice into one process. Same DLL hash within each game's four cells. Keep game running through cooldown. See docs/external-cheats/runbook.md.",
       "payload_family": "cmf-testdll",
-      "payload_path": "ProcessToolkit\\Win32\\Release\\TestDll.dll",
+      "payload_path": "ProcessToolkit\\x64\\Release\\TestDll.dll",
       "payload_sha256": null,
       "delivery_lineage": "darthton-manual-mapper (shared ancestry; group conservatively for family holdout)",
       "payload_protocol": "DLL_PROCESS_ATTACH only. Leave export/init function empty; do not call RunTest.",

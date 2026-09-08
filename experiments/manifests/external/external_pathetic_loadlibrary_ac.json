@@ -54,13 +54,15 @@
       "intended_active_seconds": "30",
       "provenance": "docs/external-cheats/README.md; fill actual tool/game hashes and runtime version before collection.",
       "attacker_executable": "External_Cheats\\Injectors\\Xenos\\build\\Win32\\Release\\Xenos.exe",
-      "operator_commands": "Launch Xenos.exe, select the printed AC PID, and add External_Cheats\\AC\\PatheticAssaultCube\\Release\\AssaultCube-Internal.dll. In Advanced choose Native inject; thread hijack, unlinking, PE-header erasure and kernel options OFF. Inject once. Confirm the DLL loaded and press F in AC to show its menu. Enable only ESP for 30 seconds. Leave the DLL/game running and press Enter in the capture shell; let the runner finish cooldown and terminate AC.",
-      "success_criterion": "Verify intended effect using game state, tool log, or payload marker independently of detector output. Record failed pilots separately.",
+      "operator_commands": "Launch Xenos.exe, select the printed AC PID, and add External_Cheats\\AC\\PatheticAssaultCube\\Release\\AssaultCube-Internal.dll. In Advanced choose Native inject; thread hijack, unlinking, PE-header erasure and kernel options OFF. Leave the init/export function empty. Inject once. Confirm the DLL loaded and press F in AC to show its menu. Enable only ESP for 30 seconds. Leave the DLL/game running and press Enter in the capture shell; let the runner finish cooldown and terminate AC.",
+      "success_criterion": "Xenos reports success; the F menu and ESP render in the target PID's window, and AC remains alive. Preserve screenshots separately from detector output.",
       "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup.",
       "payload_family": "pathetic-assaultcube",
       "secondary_mechanisms": "intra-process MinHook inline hook + window-procedure replacement; other feature writes kept off",
       "injector_commit": "4bd7399bf200f9e91f411402a3c3ac7fa4623c7e",
-      "payload_sha256": null
+      "payload_sha256": null,
+      "target_sha256": null,
+      "payload_path": "External_Cheats\\AC\\PatheticAssaultCube\\Release\\AssaultCube-Internal.dll"
     }
   }
 }

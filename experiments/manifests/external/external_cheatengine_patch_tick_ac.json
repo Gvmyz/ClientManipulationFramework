@@ -58,7 +58,8 @@
       "success_criterion": "Verify intended effect using game state, tool log, or payload marker independently of detector output. Record failed pilots separately.",
       "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup.",
       "table_sha256": "10693EB92B147E9540754F0BEB2EBCCD17ACF4EB5F7EDFE4CD91C42E04329A08",
-      "execution_mode": "User-mode memory APIs only; CE kernel read/write, DBVM, debugger and speedhack features OFF."
+      "execution_mode": "User-mode memory APIs only; CE kernel read/write, DBVM, debugger and speedhack features OFF.",
+      "target_sha256": null
     }
   }
 }

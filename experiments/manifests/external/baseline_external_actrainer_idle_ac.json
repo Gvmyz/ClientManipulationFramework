@@ -56,7 +56,8 @@
       "attacker_executable": "External_Cheats\\AC\\AcTrainer\\AcTrainer\\bin\\Release\\net8.0-windows\\win-x86\\AcTrainer.exe",
       "operator_commands": "Launch AcTrainer after the bot match is active; leave options 1-4 and 6 OFF. Wait 30 seconds at the menu, choose 0 to quit, then press Enter in the capture shell.",
       "success_criterion": "No value edits/freezes or enabled manipulation features. Record attachment and game continuity.",
-      "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup."
+      "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup.",
+      "target_sha256": null
     }
   }
 }

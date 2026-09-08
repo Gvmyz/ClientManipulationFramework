@@ -43,7 +43,7 @@
       "attacker_bitness": "x86",
       "windows_build": null,
       "provenance": "See docs/external-cheats/README.md — AC/AssaultCubeExternalBobBuilder",
-      "operator_commands": "After runner prints the AC PID and the local bot match is active, launch External_Cheats\\AC\\AssaultCubeExternalBobBuilder\\Release\\AssaultCubeAimbot.exe. Keep upstream defaults: godmode, infinite ammo, aimbot and ESP ON; noRecoil OFF. Use the aimbot activation key as documented upstream consistently. Verify health/ammo effects; observe for 30 seconds, close the external tool, then press Enter in the capture shell. Keep AC alive through cooldown.",
+      "operator_commands": "After runner prints the AC PID and the local bot match is active, launch External_Cheats\\AC\\AssaultCubeExternalBobBuilder\\Release\\AssaultCubeAimbot.exe. Keep upstream defaults: godmode, infinite ammo, aimbot and ESP ON; noRecoil OFF. For the recorded input sequence hold right mouse during seconds 5-10, 15-20 and 25-30, and shoot during those intervals. Verify health/ammo effects; observe for 30 seconds, close the external tool, then press Enter in the capture shell. Keep AC alive through cooldown.",
       "notes": "Compound native read/write workload, not a pure health-freeze case. Defaults already enable several modifications at startup, so toggling them off after launch would contaminate a claimed single-feature trace. See evaluation-plan.md.",
       "tool_name": "bobbuilder123/AssaultCubeExternalBobBuilder",
       "tool_version": "e7a872f291e429e077c837c3e189b3d6cae06f70",
@@ -53,7 +53,9 @@
       "download_date": null,
       "sha256": null,
       "validation_status": "pilot_required",
-      "intended_active_seconds": "30"
+      "intended_active_seconds": "30",
+      "target_sha256": null,
+      "attacker_executable": "External_Cheats\\AC\\AssaultCubeExternalBobBuilder\\Release\\AssaultCubeAimbot.exe"
     }
   }
 }

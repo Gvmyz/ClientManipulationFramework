@@ -33,7 +33,10 @@ param(
     [string]$SessionName        = 'TISession',
 
     # Optional: extend timings from the manifest (defaults come from manifest.timings).
-    [int]$ExtraCooldownSeconds  = 0
+    [int]$ExtraCooldownSeconds  = 0,
+
+    # Keep pilot, final and previous datasets separate. Relative to repo root.
+    [string]$RunsRoot = 'experiments\runs'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,7 +112,8 @@ $manifest = Get-Content -LiteralPath $sourceManifestPath -Raw | ConvertFrom-Json
 $experimentName = if ($manifest.name) { [string]$manifest.name } else { 'experiment' }
 $timestamp      = Get-Date -Format 'yyyyMMdd_HHmmss'
 $runId          = "$timestamp-$experimentName-ppl"
-$runDirectory   = Join-Path $script:RepoRoot (Join-Path 'experiments\runs' $runId)
+$resolvedRunsRoot = if ([IO.Path]::IsPathRooted($RunsRoot)) { $RunsRoot } else { Join-Path $script:RepoRoot $RunsRoot }
+$runDirectory   = Join-Path $resolvedRunsRoot $runId
 New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 
 # Where our final artefacts land
@@ -196,6 +200,8 @@ $result = [ordered]@{
         pplrunnerPid         = $null
         telemetryPid         = $null   # from pplrunner.log if we can grep it
         manipulationPid      = $null
+        operatorWindowStartedAt = $null
+        operatorWindowFinishedAt = $null
         targetExitCode       = $null
         manipulationExitCode = $null
         status               = 'running'
@@ -366,15 +372,27 @@ try {
             Write-Host ('  EXTERNAL ATTACKER MODE') -ForegroundColor Yellow
             Write-Host ('  Target PID: {0}' -f $targetProcess.Id) -ForegroundColor Yellow
             Write-Host ''
-            Write-Host '  Now drive the injection externally (e.g. in msfconsole run:'
-            Write-Host ('     migrate {0}' -f $targetProcess.Id) -ForegroundColor Green
-            Write-Host '  When the migration/injection has completed, come back HERE'
-            Write-Host '  and press Enter to trigger cooldown + capture teardown.'
+            $operatorInstructions = $null
+            if ($manifest.PSObject.Properties['metadata'] -and $manifest.metadata -and
+                $manifest.metadata.PSObject.Properties['extra'] -and $manifest.metadata.extra -and
+                $manifest.metadata.extra.PSObject.Properties['operator_commands']) {
+                $operatorInstructions = [string]$manifest.metadata.extra.operator_commands
+            }
+            if ($operatorInstructions) {
+                Write-Host $operatorInstructions -ForegroundColor Green
+            } else {
+                Write-Host '  Perform the external action described by this manifest.'
+            }
+            Write-Host '  Complete the prescribed observation, then press Enter for cooldown.'
+            Write-Host '  Record actual attachment/activation times and independent success evidence.'
             Write-Host '================================================================' -ForegroundColor Cyan
             Write-Host ''
+            $result.execution.operatorWindowStartedAt = (Get-Date).ToString('o')
             [void](Read-Host 'Press Enter to continue (Ctrl+C to abort)')
+            $result.execution.operatorWindowFinishedAt = (Get-Date).ToString('o')
             $result.execution.commands.manipulation = '<external attacker>'
-            $result.execution.manipulationExitCode  = 0
+            # The runner did not execute the tool and cannot know its exit code.
+            $result.execution.manipulationExitCode  = $null
         }
     } else {
         $manipulationCommandLine = Resolve-Template `

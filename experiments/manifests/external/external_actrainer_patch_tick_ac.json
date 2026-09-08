@@ -56,7 +56,8 @@
       "attacker_executable": "External_Cheats\\AC\\AcTrainer\\AcTrainer\\bin\\Release\\net8.0-windows\\win-x86\\AcTrainer.exe",
       "operator_commands": "Enable only option 1 (God Mode); keep ESP, armor, ammo and grenades OFF. Observe health=1000 for 30 seconds while taking bot damage. Toggle option 1 OFF, choose 0 to quit, then press Enter in the capture shell. Source loop requests a write every 100 ms; measure actual cadence.",
       "success_criterion": "Verify intended effect using game state, tool log, or payload marker independently of detector output. Record failed pilots separately.",
-      "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup."
+      "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup.",
+      "target_sha256": null
     }
   }
 }

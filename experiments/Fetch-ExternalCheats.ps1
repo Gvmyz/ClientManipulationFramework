@@ -65,5 +65,11 @@ foreach ($source in $sources) {
     }
     $head = (Invoke-Git -GitArgs @('-C', $out, 'rev-parse', 'HEAD') | Out-String).Trim()
     if ($head -ne $source.Commit) { throw "Pinned commit verification failed: $out" }
+    if ($source.ReleaseUrl) {
+        Write-Warning "$($source.Name) provides a prebuilt release, not buildable source."
+        Write-Host "Official release: $($source.ReleaseUrl)"
+        Write-Host 'Stage the lab-verified EXE and provenance.json in its release directory; see docs/external-cheats/runbook.md.'
+        Write-Host 'This script fetches its support repository only; it does not bypass binary security blocks.'
+    }
 }
 Write-Host 'Fetch complete. Run Build-ExternalCheats.ps1 next; see docs/external-cheats/README.md.' -ForegroundColor Green

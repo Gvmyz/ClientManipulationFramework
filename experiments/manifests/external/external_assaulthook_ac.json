@@ -47,7 +47,8 @@
       "notes": "Historical delivery uses CreateRemoteThread with LoadLibraryA. Successful compilation is not evidence of a functioning cheat. Preserve failed attempts separately; do not count this candidate as a successful hook/patch validator.",
       "validation_status": "retired_runtime_failure",
       "source_commit": "77762240d49fd32763c514e18f2d6546dc399f20",
-      "implementation_family": "assaulthook"
+      "implementation_family": "assaulthook",
+      "target_sha256": null
     }
   }
 }

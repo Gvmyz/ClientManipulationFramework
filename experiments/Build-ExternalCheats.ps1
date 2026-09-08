@@ -6,7 +6,8 @@ param(
     [string] $Only = '',
     [string] $Toolset = 'v145', # use v143 on VS 2022
     [switch] $Rebuild,
-    [switch] $IncludeLegacy
+    [switch] $IncludeLegacy,
+    [switch] $SkipPrebuilt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,9 +64,14 @@ foreach ($source in $sources) {
         continue
     }
     foreach ($build in $source.Builds) {
+        if ($SkipPrebuilt -and $build.System -eq 'Prebuilt') {
+            Write-Warning "Explicitly skipping prebuilt validation: $($source.Name)"
+            continue
+        }
         $record = [ordered]@{
             source = $source.Name; commit = $source.Commit; system = $build.System
-            configuration = $build.Config; toolset = $null; compiler = $null
+            configuration = $build.Config; platform = $build.Platform; runtime = $build.Runtime
+            version = $source.Version; toolset = $null; compiler = $null
             status = 'failed'; error = $null; artifacts = @()
         }
         $prevCL = $env:CL
@@ -75,7 +81,21 @@ foreach ($source in $sources) {
             Write-Host ""
             Write-Host "Building: $($source.Name) / $($build.Project)" -ForegroundColor Cyan
             Remove-Item Env:CL, Env:_CL_ -ErrorAction SilentlyContinue
-            if ($build.System -eq 'Table') {
+            if ($build.System -eq 'Prebuilt') {
+                $provenancePath = Join-Path $sourceDir $build.Provenance
+                if (-not (Test-Path -LiteralPath $provenancePath)) {
+                    throw 'ExtremeInjector has no published source build. Stage its verified official release and release/provenance.json as described in docs/external-cheats/runbook.md; or use -SkipPrebuilt for source builds only.'
+                }
+                $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
+                if ($provenance.source_url -ne $source.ReleaseUrl -or $provenance.tool_version -ne $source.Version -or $provenance.sha256 -notmatch '^[A-Fa-f0-9]{64}$' -or -not $provenance.download_date) {
+                    throw 'Prebuilt provenance must record the official release URL, version, download date and actual executable SHA-256.'
+                }
+                $binary = Join-Path $sourceDir $build.Artifacts[0]
+                if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne $provenance.sha256) {
+                    throw 'Prebuilt executable differs from the locally recorded, frozen provenance hash.'
+                }
+                Write-Host 'Prebuilt release matches operator-recorded provenance. This is not source compilation or publisher authentication.'
+            } elseif ($build.System -eq 'Table') {
                 [xml]$table = Get-Content -LiteralPath (Join-Path $sourceDir $source.File) -Raw
                 if (-not $table.CheatTable -or $table.SelectNodes('//LuaScript|//AssemblerScript').Count) {
                     throw 'Expected the audited, data-only Cheat Engine table.'
@@ -100,7 +120,7 @@ foreach ($source in $sources) {
                 $buildArgs = @((Join-Path $sourceDir $build.Project), "/p:Configuration=$($build.Config)", "/p:Platform=$($build.Platform)", "/p:PlatformToolset=$Toolset", '/nologo', '/v:minimal')
                 foreach ($property in $build.Properties) { $buildArgs += Expand-BuildToken $property $sourceDir }
                 if ($Rebuild) { $buildArgs += '/t:Rebuild' }
-                $log = Join-Path $reportDir (($source.Name -replace '/', '-') + '-' + [IO.Path]::GetFileNameWithoutExtension($build.Project) + '.log')
+                $log = Join-Path $reportDir (($source.Name -replace '/', '-') + '-' + [IO.Path]::GetFileNameWithoutExtension($build.Project) + '-' + $build.Platform + '.log')
                 $buildArgs += @('/fl', "/flp:logfile=$log;verbosity=normal")
                 & $msbuild @buildArgs
                 if ($LASTEXITCODE -ne 0) { throw "MSBuild failed (exit $LASTEXITCODE). Log: $log" }

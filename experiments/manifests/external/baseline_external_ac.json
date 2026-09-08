@@ -45,7 +45,8 @@
       "implementation_family": "ac-clean",
       "validation_status": "pilot_required",
       "scripted_input": "Same autostart-baseline.cfg, ac_desert and bot configuration as external attack captures.",
-      "notes": "No attacker. Matched timing control; do not pool with shorter baseline_assaultcube traces without aligning windows."
+      "notes": "No attacker. Matched timing control; do not pool with shorter baseline_assaultcube traces without aligning windows.",
+      "target_sha256": null
     }
   }
 }

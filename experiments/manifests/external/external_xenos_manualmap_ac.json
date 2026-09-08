@@ -1,19 +1,10 @@
 {
   "name": "external_xenos_manualmap_ac",
-  "description": "Xenos manual-mapping our synthetic TestDll into ac_client.exe. External delivery mechanism; payload is our DLL to isolate the injector's fingerprint from the payload's behaviour.",
+  "description": "Xenos manual-mapping our synthetic TestDll into ac_client.exe. External delivery mechanism (DarthTon Xenos); payload is our own DLL so any fingerprint difference vs. our synthetic inject-manualmap is attributable to the injector, not the payload. Operator drives Xenos from a second shell.",
   "providers": [
-    {
-      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
-      "name": "ThreatIntelligence"
-    },
-    {
-      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
-      "name": "KernelProcess"
-    },
-    {
-      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
-      "name": "Sysmon"
-    }
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
   ],
   "sessionName": "TISession",
   "timings": {
@@ -29,11 +20,6 @@
     "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
     "workingDirectory": "ProcessToolkit\\x64\\Release"
   },
-  "manipulation": {
-    "executable": "External_Cheats\\Injectors\\Xenos\\bin\\Release\\XenosCLI.exe",
-    "workingDirectory": "External_Cheats\\Injectors\\Xenos\\bin\\Release",
-    "commandLineTemplate": "--process ac_client.exe --image {repoRoot}\\ProcessToolkit\\Win32\\Release\\TestDll.dll --mode ManualMap"
-  },
   "metadata": {
     "label": "attack",
     "technique": "external_xenos_manualmap_ac",
@@ -48,7 +34,8 @@
       "attacker_bitness": "x86",
       "windows_build": "26200",
       "provenance": "See docs/external-cheats/README.md — Injectors/Xenos",
-      "notes": "Xenos is the external delivery mechanism; the payload is our own TestDll so we can compare the Xenos manualmap fingerprint against our synthetic inject-manualmap on the same target. Any difference is attributable to the injector, not to the payload."
+      "operator_commands": "In a second PowerShell after runner prints target PID: & 'External_Cheats\\Injectors\\Xenos\\Bin\\Release\\XenosCLI.exe' --process ac_client.exe --image 'C:\\Users\\lab\\ClientManipulationFramework\\ProcessToolkit\\Win32\\Release\\TestDll.dll' --mode ManualMap  (verify actual flag names via '--help' before first run). Xenos exits after injection; wait ~5 seconds, then return to runner and press Enter.",
+      "notes": "Ground-truth = injection.manualmap. Xenos is famous for reflective manual mapping. Comparing this row's fingerprint against our synthetic inject-manualmap on the same target is the interesting evidence for Ch 7: identical delivery pattern, different attacker code."
     }
   }
 }

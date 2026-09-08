@@ -3,9 +3,23 @@
 #include <TlHelp32.h>
 #include <cstring>
 
-#include "LengthDisasm.h"
 #include "Memory.h"
 #include "MemoryPatch.h"
+
+// Length-disassembler dependency: HDE (Hacker Disassembler Engine) by
+// Vyacheslav Patkov, public domain. Vendored under ProcessToolkit/third_party/hde/
+// from MinHook v1.3.3's copy; see the NOTICE.md there for provenance. HDE gives
+// us the per-instruction length and enough field decoding (ModR/M, prefixes,
+// immediate/displacement flags) to (a) find the smallest instruction-aligned
+// prologue length that covers our JMP and (b) classify each preserved
+// instruction's position-dependent operand so the trampoline builder can
+// relocate it. The rel8-refusal policy stays in this file — HDE is a decoder,
+// not a policy engine.
+#ifdef _WIN64
+#  include "../third_party/hde/hde64.h"
+#else
+#  include "../third_party/hde/hde32.h"
+#endif
 
 namespace PT::HookInjection {
 
@@ -23,9 +37,170 @@ namespace PT::HookInjection {
 		// large enough to cover HOOK_BYTES + one worst-case instruction (15).
 		constexpr std::size_t PROLOGUE_READ_WINDOW = 32;
 
+		// ------------------------------------------------------------------
+		// HDE wrapper types + helpers.
+		//
+		// The trampoline builder needs three things from a decoder: an
+		// instruction's length, a classification of any position-dependent
+		// operand it carries, and (when relevant) the byte offset of that
+		// operand within the instruction. HDE exposes the raw pieces
+		// (opcode, ModR/M, prefix bytes, F_IMM*/F_DISP*/F_RELATIVE flags);
+		// this small wrapper turns them into the closed set of cases the
+		// caller cares about.
+		//
+		// Categories we distinguish:
+		//   None            — no fixup needed; the instruction is
+		//                     position-independent (or its operand is an
+		//                     absolute value that stays valid after a move).
+		//   ModrmRipDisp32  — x64 only: ModR/M mod=00 rm=101 encodes
+		//                     [rip + disp32]. Moving the instruction by
+		//                     `delta` invalidates the disp32; the trampoline
+		//                     builder subtracts `delta` from it.
+		//   CallJmpRel32    — CALL rel32 (E8) or JMP rel32 (E9). The imm32
+		//                     is a signed offset from the byte after the
+		//                     instruction to the target. Same delta fixup.
+		//   JccRel32        — Long-form conditional jumps (0F 80..8F). Same
+		//                     shape as CallJmpRel32; kept as its own tag so
+		//                     the classifier and any future diagnostics can
+		//                     tell them apart.
+		//   ShortRel8       — rel8 branches (jmp EB, Jcc 70..7F, and
+		//                     LOOP/JECXZ family). rel8 has range ±127 so
+		//                     the fixup may not fit after relocation; the
+		//                     caller refuses to hook rather than gamble.
+		// ------------------------------------------------------------------
+		enum class RipRel {
+			None,
+			ModrmRipDisp32,
+			CallJmpRel32,
+			JccRel32,
+			ShortRel8,
+		};
+
+		struct Fixup {
+			RipRel      kind;
+			std::size_t operand_offset;  // byte offset of the disp32/rel32 within the buffer
+			std::size_t instr_offset;    // byte offset of the instruction start within the buffer
+			std::size_t instr_length;    // total length of the instruction, in bytes
+		};
+
+		struct DecodedInstruction {
+			std::size_t length;          // total instruction length, in bytes
+			RipRel      rip_rel_kind;    // position-dependent operand classification
+			std::size_t rip_disp_offset; // byte offset of the operand within THIS instruction
+			                             // (valid iff rip_rel_kind is not None or ShortRel8)
+		};
+
+		// Decode the instruction at bytes[0..limit) with HDE. Returns nullopt
+		// on any HDE F_ERROR flag, on a length that overruns `limit`, or on
+		// a length HDE reports as zero (which HDE never does for a valid
+		// decode; we treat it as belt-and-suspenders).
+		std::optional<DecodedInstruction> decode_one(
+			const std::uint8_t* bytes, std::size_t limit)
+		{
+			if (!bytes || limit == 0) return std::nullopt;
+
+#ifdef _WIN64
+			hde64s h{};
+			const unsigned int len = hde64_disasm(bytes, &h);
+#else
+			hde32s h{};
+			const unsigned int len = hde32_disasm(bytes, &h);
+#endif
+			if ((h.flags & F_ERROR) != 0 || len == 0 || len > limit) {
+				return std::nullopt;
+			}
+
+			RipRel      kind           = RipRel::None;
+			std::size_t operand_offset = 0;
+
+			// (1) Rel8 short branches: any relative operand carried in an imm8.
+			//     Covers jmp rel8 (EB), Jcc rel8 (70..7F), and LOOP/LOOPZ/LOOPNZ/JECXZ.
+			if ((h.flags & F_RELATIVE) != 0 && (h.flags & F_IMM8) != 0) {
+				kind = RipRel::ShortRel8;
+			}
+			// (2) Rel32 branches: CALL/JMP rel32 (single-byte opcode E8/E9)
+			//     or Jcc long form (two-byte opcode 0F 80..8F). The imm32
+			//     sits in the LAST four bytes of the instruction.
+			else if ((h.flags & F_RELATIVE) != 0 && (h.flags & F_IMM32) != 0) {
+				const bool two_byte_jcc =
+					(h.opcode == 0x0F && h.opcode2 >= 0x80 && h.opcode2 <= 0x8F);
+				kind = two_byte_jcc ? RipRel::JccRel32 : RipRel::CallJmpRel32;
+				operand_offset = static_cast<std::size_t>(len) - 4;
+			}
+#ifdef _WIN64
+			// (3) x64 RIP-relative addressing: ModR/M mod=00 rm=101 encodes
+			//     [rip + disp32], with the disp32 immediately after the ModR/M
+			//     byte (no SIB in this form). On x86 the same encoding means
+			//     absolute [disp32] and needs no fixup.
+			else if (h.modrm != 0 && h.modrm_mod == 0 && h.modrm_rm == 5
+			         && (h.flags & F_DISP32) != 0) {
+				kind = RipRel::ModrmRipDisp32;
+				std::size_t off = 0;
+				if (h.p_rep)  off += 1;
+				if (h.p_lock) off += 1;
+				if (h.p_seg)  off += 1;
+				if (h.p_66)   off += 1;
+				if (h.p_67)   off += 1;
+				if (h.rex)    off += 1;
+				off += 1;                            // primary opcode byte
+				if (h.opcode == 0x0F) off += 1;      // secondary opcode byte if 0F escape
+				off += 1;                            // ModR/M byte
+				operand_offset = off;                // disp32 starts here
+			}
+#endif
+
+			return DecodedInstruction{
+				/* length          */ static_cast<std::size_t>(len),
+				/* rip_rel_kind    */ kind,
+				/* rip_disp_offset */ operand_offset,
+			};
+		}
+
+		// Walk the buffer instruction by instruction to find the smallest
+		// cumulative length that is at least min_size AND falls on an
+		// instruction boundary. Returns nullopt if any instruction in the
+		// walk fails to decode, or if min_size cannot be reached within
+		// bytes.size().
+		std::optional<std::size_t> aligned_length_at_least(
+			const std::vector<std::uint8_t>& bytes, std::size_t min_size)
+		{
+			std::size_t acc = 0;
+			while (acc < min_size) {
+				auto d = decode_one(bytes.data() + acc, bytes.size() - acc);
+				if (!d) return std::nullopt;
+				acc += d->length;
+				if (acc > bytes.size()) return std::nullopt;
+			}
+			return acc;
+		}
+
+		// Walk the buffer up to preserved_bytes and collect every
+		// position-dependent operand's (kind, offset-from-buffer-start,
+		// instruction-start, instruction-length). Returns nullopt on any
+		// decode error; an empty vector means "safe to copy verbatim".
+		std::optional<std::vector<Fixup>> collect_fixups(
+			const std::vector<std::uint8_t>& bytes, std::size_t preserved_bytes)
+		{
+			std::vector<Fixup> fixups;
+			std::size_t off = 0;
+			while (off < preserved_bytes) {
+				auto d = decode_one(bytes.data() + off, bytes.size() - off);
+				if (!d) return std::nullopt;
+				if (d->rip_rel_kind != RipRel::None) {
+					fixups.push_back(Fixup{
+						/* kind           */ d->rip_rel_kind,
+						/* operand_offset */ off + d->rip_disp_offset,
+						/* instr_offset   */ off,
+						/* instr_length   */ d->length,
+					});
+				}
+				off += d->length;
+			}
+			return fixups;
+		}
+
 #ifdef _WIN64
 		constexpr std::size_t HOOK_BYTES = 14;
-		constexpr bool IS_X64 = true;
 		// Bytes of counter-increment code that precede the preserved prologue
 		// inside the shellcode. The prologue's first byte lands at
 		// shellcode_addr + PROLOGUE_OFFSET_IN_SHELLCODE, which is what the
@@ -93,7 +268,6 @@ namespace PT::HookInjection {
 #else   // _WIN64
 
 		constexpr std::size_t HOOK_BYTES = 5;
-		constexpr bool IS_X64 = false;
 		// See x64 comment above. On x86 the counter-increment is
 		// `F0 FF 05 <abs32>` = 7 bytes.
 		constexpr std::size_t PROLOGUE_OFFSET_IN_SHELLCODE = 7;
@@ -161,15 +335,14 @@ namespace PT::HookInjection {
 		// absolute target.
 		void apply_fixups(
 			std::vector<std::uint8_t>& prologue,
-			const std::vector<PT::LengthDisasm::Fixup>& fixups,
+			const std::vector<Fixup>& fixups,
 			std::uintptr_t src_base,
 			std::uintptr_t dst_base)
 		{
 			const std::int64_t delta =
 				static_cast<std::int64_t>(dst_base) - static_cast<std::int64_t>(src_base);
 			for (const auto& fx : fixups) {
-				if (fx.kind == PT::LengthDisasm::RipRel::None ||
-					fx.kind == PT::LengthDisasm::RipRel::ShortRel8) {
+				if (fx.kind == RipRel::None || fx.kind == RipRel::ShortRel8) {
 					continue;   // ShortRel8 should have been rejected earlier
 				}
 				if (fx.operand_offset + 4 > prologue.size()) continue;
@@ -313,8 +486,7 @@ namespace PT::HookInjection {
 		if (preserve_bytes_hint >= HOOK_BYTES) {
 			preserved = preserve_bytes_hint;
 		} else {
-			auto auto_len = PT::LengthDisasm::aligned_length_at_least(
-				*probe, HOOK_BYTES, IS_X64);
+			auto auto_len = aligned_length_at_least(*probe, HOOK_BYTES);
 			if (!auto_len) return std::nullopt;   // undecodable prologue
 			preserved = *auto_len;
 		}
@@ -323,10 +495,10 @@ namespace PT::HookInjection {
 		// 3. Walk the preserved region collecting position-dependent-operand
 		//    fixups; reject if we find something we cannot safely relocate
 		//    (short rel8 branches — rel8 fixups may overflow after relocation).
-		auto fixups = PT::LengthDisasm::collect_fixups(*probe, preserved, IS_X64);
+		auto fixups = collect_fixups(*probe, preserved);
 		if (!fixups) return std::nullopt;
 		for (const auto& fx : *fixups) {
-			if (fx.kind == PT::LengthDisasm::RipRel::ShortRel8) {
+			if (fx.kind == RipRel::ShortRel8) {
 				return std::nullopt;
 			}
 		}

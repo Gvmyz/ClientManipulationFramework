@@ -31,6 +31,12 @@
     <Filter Include="Source Files\outdated">
       <UniqueIdentifier>{79d01da1-fe0d-4023-947f-6c87053ed8bb}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\third_party\hde">
+      <UniqueIdentifier>{6f2c0a3a-8b40-4e5b-9a10-6d2d7c4c9a11}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\third_party\hde">
+      <UniqueIdentifier>{a4e0e21b-1e4e-4a41-9c34-ba3f9b2f2c22}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="external\imgui\imgui.cpp">
@@ -102,11 +108,14 @@
     <ClCompile Include="src\IatHook.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\LengthDisasm.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\DirectSyscall.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\hde\hde32.c">
+      <Filter>Source Files\third_party\hde</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\hde\hde64.c">
+      <Filter>Source Files\third_party\hde</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -182,11 +191,23 @@
     <ClInclude Include="include\IatHook.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\LengthDisasm.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="src\DirectSyscall.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\hde\hde32.h">
+      <Filter>Header Files\third_party\hde</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\hde\hde64.h">
+      <Filter>Header Files\third_party\hde</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\hde\pstdint.h">
+      <Filter>Header Files\third_party\hde</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\hde\table32.h">
+      <Filter>Header Files\third_party\hde</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\hde\table64.h">
+      <Filter>Header Files\third_party\hde</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

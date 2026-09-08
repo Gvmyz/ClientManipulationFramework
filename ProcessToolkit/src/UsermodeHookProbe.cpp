@@ -92,11 +92,28 @@
 #pragma intrinsic(_ReturnAddress)
 
 // ----------------------------------------------------------------------------
+// Architecture gate. The probe body below is x64-only:
+//   * The 14-byte absolute JMP patch layout matches the x64 form
+//     (FF 25 00 00 00 00 + 8-byte absolute target); the equivalent on
+//     x86 is a 5-byte `E9 rel32` relative JMP, and the probe was never
+//     written for that form.
+//   * The forward path invokes Direct_Nt* symbols that only exist on
+//     x64 (see DirectSyscall.cpp's own _WIN64 gate and the
+//     ExcludedFromBuild condition on DirectSyscallStubs.asm for Win32).
+//   * The RQ3 direct-syscall evidence in the thesis is captured on
+//     TestTarget x64; the probe was never run against a Win32 target.
+//
+// On Win32 the file compiles to only the API surface: Install() returns
+// false, Uninstall()/ResetCounts() are no-ops, the getters return static
+// zero-initialised state. Callers keep the same function signatures and
+// need not know they are talking to the stubbed implementation.
+// ----------------------------------------------------------------------------
+#ifdef _WIN64
+
 // External refs to DirectSyscall's assembly stubs. Declared with C linkage
 // because they live in DirectSyscallStubs.asm and are exposed with C names
 // via `extern "C"` in DirectSyscall.cpp. We forward to these directly so
 // that our own hooks don't recurse into themselves.
-// ----------------------------------------------------------------------------
 extern "C" {
     NTSTATUS Direct_NtOpenProcess(
         PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PtClientId*);
@@ -472,3 +489,37 @@ namespace PT::UsermodeHookProbe {
     }
 
 }  // namespace PT::UsermodeHookProbe
+
+#else   // !_WIN64  ----------------------------------------------------------
+// Win32 stub implementation. The probe is unavailable on 32-bit builds
+// (see the architecture note at the top of the file). Callers get a
+// working API surface: Install() reports failure so the caller knows the
+// probe is not active, the getters return a static zero-initialised
+// HitCounts, and the rest are silent no-ops.
+
+namespace PT::UsermodeHookProbe {
+
+    bool Install(const std::wstring& /*log_path*/) {
+        return false;
+    }
+
+    void Uninstall() {}
+
+    const HitCounts& GetCounts() {
+        static const HitCounts empty{};
+        return empty;
+    }
+
+    const std::wstring& GetLogPath() {
+        static const std::wstring empty;
+        return empty;
+    }
+
+    void ResetCounts() {}
+
+    uint64_t GetLogLinesWritten() { return 0; }
+    uint64_t GetLogLinesDropped() { return 0; }
+
+}  // namespace PT::UsermodeHookProbe
+
+#endif  // _WIN64

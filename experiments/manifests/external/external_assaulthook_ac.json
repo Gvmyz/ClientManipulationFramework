@@ -1,24 +1,15 @@
 {
   "name": "external_assaulthook_ac",
-  "description": "matseee AssaultHook self-injecting DLL cheat against ac_client.exe. External validator; injection + hook + patch classes.",
+  "description": "matseee AssaultHook injected into ac_client.exe. External validator; injection-class delivery (DLL loader via bundled injector), then intra-process hook + patch inside AC. Operator drives the injection: runner enters external-attacker mode, prints AC PID, operator runs injector.exe from a second shell, lets the cheat run for ~30s, closes it, returns to runner and presses Enter.",
   "providers": [
-    {
-      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
-      "name": "ThreatIntelligence"
-    },
-    {
-      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
-      "name": "KernelProcess"
-    },
-    {
-      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
-      "name": "Sysmon"
-    }
+    { "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}", "name": "ThreatIntelligence" },
+    { "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}", "name": "KernelProcess" },
+    { "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}", "name": "Sysmon" }
   ],
   "sessionName": "TISession",
   "timings": {
     "warmupSeconds": 20,
-    "cooldownSeconds": 20
+    "cooldownSeconds": 15
   },
   "target": {
     "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
@@ -28,11 +19,6 @@
   "telemetry": {
     "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
     "workingDirectory": "ProcessToolkit\\x64\\Release"
-  },
-  "manipulation": {
-    "executable": "External_Cheats\\AC\\AssaultHook\\src\\Release\\AssaultHook.exe",
-    "workingDirectory": "External_Cheats\\AC\\AssaultHook\\src\\Release",
-    "commandLineTemplate": ""
   },
   "metadata": {
     "label": "attack",
@@ -48,7 +34,8 @@
       "attacker_bitness": "x86",
       "windows_build": "26200",
       "provenance": "See docs/external-cheats/README.md — AC/AssaultHook (matseee)",
-      "notes": "Self-injecting DLL. Attacker binary finds AC, injects its DLL, then may exit. Once injected, the DLL performs its own hook + patch operations from inside the target — those will show as intra-process activity, not as cross-process ETW-TI events. Ground-truth label = injection variant.loadlibrary based on the outer injection pattern; the post-injection hook/patch activity is not directly observable via our cross-process detectors."
+      "operator_commands": "In a second PowerShell after runner prints target PID: & 'External_Cheats\\AC\\AssaultHook\\src\\Release\\injector.exe'  (injector auto-locates AC and drops AssaultHook.dll into it). Let it run 20-30s, close both, return to runner and press Enter.",
+      "notes": "Ground-truth = injection.loadlibrary because the injector uses the classic CreateRemoteThread(LoadLibraryW) delivery. The post-injection hook/patch activity happens INSIDE AC and is intra-process, so our cross-process detectors won't see it — that's honest to document, not a bug."
     }
   }
 }

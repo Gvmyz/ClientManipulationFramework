@@ -37,11 +37,27 @@
 #include <cstring>
 
 // ----------------------------------------------------------------------------
+// Architecture note. The direct-syscall dispatcher is x64-only by design:
+//   * DirectSyscallStubs.asm is MASM64 (uses r10/rcx and the `syscall`
+//     instruction), and is ExcludedFromBuild for Win32 in the vcxproj.
+//   * The ntdll stub prologue that HellsGate parses (4C 8B D1 B8 imm32)
+//     is the x64 form; the x86 form is entirely different (B8 imm32,
+//     mov edx WOW64Transition, call edx) and issuing a real syscall from
+//     a WoW64 process requires Heaven's Gate, out of scope here.
+//   * The RQ3 direct-syscall evidence in the thesis is captured on
+//     TestTarget x64; the AC/Win32 direct-syscall path was never planned.
+//
+// On Win32 this file therefore compiles to only the API surface:
+// Initialize() returns false, IsEnabled() is always false, and every
+// PT::DirectSyscall::NtXxx wrapper falls through to the ntdll export via
+// GetProcAddress. Callers (Memory.cpp, ProcessMemory.cpp, ...) do not
+// need to know which path they got: the surface is identical.
+// ----------------------------------------------------------------------------
+#ifdef _WIN64
 // Assembly stubs live in DirectSyscallStubs.asm. Each stub reads its
 // per-function syscall number from a global variable (below) and emits
 // the syscall instruction. The variables are declared as C linkage so
 // the .asm file can EXTERN them.
-// ----------------------------------------------------------------------------
 extern "C" {
     // Filled in by Initialize(); the stubs read these at every call.
     // Init value 0xFFFFFFFF is deliberately invalid so an un-resolved
@@ -68,21 +84,30 @@ extern "C" {
         PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, HANDLE, PVOID,
         PVOID, ULONG, SIZE_T, SIZE_T, SIZE_T, PVOID);
 }
+#endif  // _WIN64
 
 namespace {
 
     // Enable/disable + resolved state, updated by Initialize/SetEnabled.
+    // Both are unused on Win32 (Initialize returns false there) but kept
+    // at file scope so the getters remain trivially constant-fold-friendly.
     bool g_direct_syscall_enabled  = false;
     bool g_direct_syscall_resolved = false;
 
+#ifdef _WIN64
     // Locate ntdll.dll's base address. It's always the second entry in the
     // process's InMemoryOrder module list (first is the .exe itself). We
     // could also call GetModuleHandleW(L"ntdll.dll") but that goes through
     // kernel32, which some EDRs hook — reading the PEB directly is the
     // canonical stealthy approach.
+    //
+    // PEB access via TEB is the classic "no imports" technique. On x64
+    // the TEB pointer sits at gs:[0x30] and the PEB pointer at TEB+0x60;
+    // __readgsqword(0x60) folds the two reads into one segment-relative
+    // load. (The x86 form would go through __readfsdword(0x30), but the
+    // rest of the direct-syscall subsystem is x64-only, so the whole
+    // resolver is guarded here.)
     HMODULE find_ntdll() {
-        // PEB access via TEB is the classic "no imports" technique. On
-        // x64, TEB pointer is at gs:[0x30], PEB at TEB+0x60.
         PPEB peb = reinterpret_cast<PPEB>(__readgsqword(0x60));
         if (!peb || !peb->Ldr) return nullptr;
         auto* head = &peb->Ldr->InMemoryOrderModuleList;
@@ -145,6 +170,7 @@ namespace {
         out = n;
         return n != 0xFFFFFFFF;
     }
+#endif  // _WIN64
 
 }  // anonymous namespace
 
@@ -152,6 +178,7 @@ namespace {
 namespace PT::DirectSyscall {
 
     bool Initialize() {
+#ifdef _WIN64
         HMODULE ntdll = find_ntdll();
         if (!ntdll) return false;
 
@@ -169,6 +196,17 @@ namespace PT::DirectSyscall {
 
         g_direct_syscall_resolved = ok;
         return ok;
+#else
+        // Win32 (WoW64) has no direct-syscall path in this design: the
+        // MASM64 stubs are excluded from Win32 builds and issuing a real
+        // syscall from a 32-bit WoW64 process needs Heaven's Gate, which
+        // is out of scope. Callers still work through the fallback path
+        // below (which routes to ntdll's exports via GetProcAddress), so
+        // a Win32 binary behaves as if --via-direct-syscall had not been
+        // passed even when it was.
+        g_direct_syscall_resolved = false;
+        return false;
+#endif
     }
 
     bool IsResolved() { return g_direct_syscall_resolved; }
@@ -191,13 +229,21 @@ namespace PT::DirectSyscall {
         return cached;
     }
 
+    // Each wrapper: on x64 route through Direct_Nt* when the direct-syscall
+    // path is enabled, otherwise fall through to ntdll's export. On Win32
+    // the Direct_Nt* symbols do not exist (their MASM64 file is excluded
+    // from the Win32 build), so the direct-syscall branch is compiled out
+    // entirely and the fallback path is the only one that can run.
+
     NTSTATUS NtOpenProcess(
         PHANDLE ProcessHandle, ACCESS_MASK DesiredAccess,
         POBJECT_ATTRIBUTES ObjectAttributes, PtClientId* ClientId)
     {
+#ifdef _WIN64
         if (g_direct_syscall_enabled) {
             return Direct_NtOpenProcess(ProcessHandle, DesiredAccess, ObjectAttributes, ClientId);
         }
+#endif
         using Fn = NTSTATUS NTAPI (PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PtClientId*);
         auto* fn = fallback<Fn>("NtOpenProcess");
         return fn ? fn(ProcessHandle, DesiredAccess, ObjectAttributes, ClientId) : STATUS_ENTRYPOINT_NOT_FOUND;
@@ -207,10 +253,12 @@ namespace PT::DirectSyscall {
         HANDLE ProcessHandle, PVOID* BaseAddress, ULONG_PTR ZeroBits,
         PSIZE_T RegionSize, ULONG AllocationType, ULONG Protect)
     {
+#ifdef _WIN64
         if (g_direct_syscall_enabled) {
             return Direct_NtAllocateVirtualMemory(
                 ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
         }
+#endif
         using Fn = NTSTATUS NTAPI (HANDLE, PVOID*, ULONG_PTR, PSIZE_T, ULONG, ULONG);
         auto* fn = fallback<Fn>("NtAllocateVirtualMemory");
         return fn ? fn(ProcessHandle, BaseAddress, ZeroBits, RegionSize, AllocationType, Protect)
@@ -221,10 +269,12 @@ namespace PT::DirectSyscall {
         HANDLE ProcessHandle, PVOID* BaseAddress, PSIZE_T RegionSize,
         ULONG NewProtect, PULONG OldProtect)
     {
+#ifdef _WIN64
         if (g_direct_syscall_enabled) {
             return Direct_NtProtectVirtualMemory(
                 ProcessHandle, BaseAddress, RegionSize, NewProtect, OldProtect);
         }
+#endif
         using Fn = NTSTATUS NTAPI (HANDLE, PVOID*, PSIZE_T, ULONG, PULONG);
         auto* fn = fallback<Fn>("NtProtectVirtualMemory");
         return fn ? fn(ProcessHandle, BaseAddress, RegionSize, NewProtect, OldProtect)
@@ -235,10 +285,12 @@ namespace PT::DirectSyscall {
         HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer,
         SIZE_T NumberOfBytesToWrite, PSIZE_T NumberOfBytesWritten)
     {
+#ifdef _WIN64
         if (g_direct_syscall_enabled) {
             return Direct_NtWriteVirtualMemory(
                 ProcessHandle, BaseAddress, Buffer, NumberOfBytesToWrite, NumberOfBytesWritten);
         }
+#endif
         using Fn = NTSTATUS NTAPI (HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
         auto* fn = fallback<Fn>("NtWriteVirtualMemory");
         return fn ? fn(ProcessHandle, BaseAddress, Buffer, NumberOfBytesToWrite, NumberOfBytesWritten)
@@ -249,10 +301,12 @@ namespace PT::DirectSyscall {
         HANDLE ProcessHandle, PVOID BaseAddress, PVOID Buffer,
         SIZE_T NumberOfBytesToRead, PSIZE_T NumberOfBytesRead)
     {
+#ifdef _WIN64
         if (g_direct_syscall_enabled) {
             return Direct_NtReadVirtualMemory(
                 ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead);
         }
+#endif
         using Fn = NTSTATUS NTAPI (HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
         auto* fn = fallback<Fn>("NtReadVirtualMemory");
         return fn ? fn(ProcessHandle, BaseAddress, Buffer, NumberOfBytesToRead, NumberOfBytesRead)
@@ -266,12 +320,14 @@ namespace PT::DirectSyscall {
         SIZE_T ZeroBits, SIZE_T StackSize, SIZE_T MaximumStackSize,
         PVOID AttributeList)
     {
+#ifdef _WIN64
         if (g_direct_syscall_enabled) {
             return Direct_NtCreateThreadEx(
                 ThreadHandle, DesiredAccess, ObjectAttributes, ProcessHandle,
                 StartRoutine, Argument, CreateFlags, ZeroBits, StackSize,
                 MaximumStackSize, AttributeList);
         }
+#endif
         using Fn = NTSTATUS NTAPI (PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, HANDLE,
                                    PVOID, PVOID, ULONG, SIZE_T, SIZE_T, SIZE_T, PVOID);
         auto* fn = fallback<Fn>("NtCreateThreadEx");

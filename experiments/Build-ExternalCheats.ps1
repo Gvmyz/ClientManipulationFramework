@@ -41,16 +41,41 @@ $ext  = Join-Path $root "External_Cheats"
 #                 style flags. Empty string = no overrides.
 $projects = @(
     @{
-        Name      = "AC / AssaultCubeExternalBobBuilder"
-        Solution  = "AC\AssaultCubeExternalBobBuilder\AssaultCubeAimbot.sln"
-        Config    = "Release"
-        Platform  = "x86"
-        Toolset   = "v145"
-        CLPrepend = '/I "$(ProjectDirAbs)\imgui" /I "$(ProjectDirAbs)\imgui\backends" /std:c++17'
+        Name       = "AC / AssaultCubeExternalBobBuilder"
+        Solution   = "AC\AssaultCubeExternalBobBuilder\AssaultCubeAimbot.sln"
+        Config     = "Release"
+        Platform   = "x86"
+        Toolset    = "v145"
+        CLPrepend  = '/I "$(ProjectDirAbs)\imgui" /I "$(ProjectDirAbs)\imgui\backends" /std:c++17'
         ProjectDir = "AC\AssaultCubeExternalBobBuilder"
+    },
+    @{
+        # matseee AssaultHook — builds both the cheat DLL (from dllmain.cpp)
+        # and the bundled injector.exe from the same solution.
+        Name       = "AC / AssaultHook (DLL + injector)"
+        Solution   = "AC\AssaultHook\src\AssaultHook.sln"
+        Config     = "Release"
+        Platform   = "Win32"
+        Toolset    = "v145"
+        CLPrepend  = ''
+        ProjectDir = "AC\AssaultHook\src"
+    },
+    @{
+        # DarthTon Xenos — user-mode manual-mapping injector.
+        # Build the x86 version because AC is 32-bit; Xenos's bitness must
+        # match the target. Add an x64 entry later for Xonotic if needed.
+        Name       = "Injectors / Xenos (x86)"
+        Solution   = "Injectors\Xenos\Xenos.sln"
+        Config     = "Release"
+        Platform   = "Win32"
+        Toolset    = "v145"
+        CLPrepend  = ''
+        ProjectDir = "Injectors\Xenos"
     }
-    # AssaultHook, Xenos, ExtremeInjector entries added after we know
-    # their build quirks.
+    # ExtremeInjector deliberately omitted: its C++/CLI project targets old
+    # .NET runtimes bundled as .zip files under VC/, and modern-toolset
+    # retargeting is not worth the effort when Xenos covers the same role.
+    # Bring back only if time permits before deadline.
 )
 
 foreach ($p in $projects) {

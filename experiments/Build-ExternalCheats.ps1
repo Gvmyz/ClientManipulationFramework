@@ -2,18 +2,20 @@
 # ------------------------
 # Builds each external cheat / injector under External_Cheats/ WITHOUT
 # modifying the cloned upstream trees. Every per-project quirk (missing
-# include path, unset language standard, wrong platform label) is fixed
-# by prepending arguments to CL via the CL environment variable, which
-# MSVC inherits per-invocation.
+# include path, unset language standard, wrong platform label) is handled
+# with MSBuild arguments and the CL (prepend) / _CL_ (append) environment
+# variables. Overrides that must win over project options use _CL_.
 #
 # Reviewer-facing contract: `git clone <upstream>` then run this script
-# reproduces the build byte-for-byte, and no diff exists between the
-# cloned tree and a fresh clone from GitHub.
+# builds without source/project edits in the cloned tree. Byte-for-byte
+# reproducibility also requires pinned inputs and a deterministic toolchain.
 #
 # ASCII-only (PowerShell 5.1 mis-parses em-dashes without UTF-8 BOM).
 
 param(
-    [string] $Only = ""    # optional substring filter on project name
+    [string] $Only = "",   # optional substring filter on project name
+    [string] $Toolset = "", # optional override, e.g. v143 for VS 2022
+    [switch] $Rebuild       # discard stale objects/PCH after changing flags
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,7 +34,7 @@ $ext  = Join-Path $root "External_Cheats"
 
 # One entry per external project. Fields:
 #   Name           - reporting label
-#   Solution       - path to .sln, relative to External_Cheats\
+#   Solution       - path to .sln or .vcxproj, relative to External_Cheats\
 #   Config         - MSBuild /p:Configuration value
 #   Platform       - MSBuild /p:Platform value (label as declared in .sln;
 #                    verify with `Select-String "SolutionConfigurationPlatforms"
@@ -42,11 +44,12 @@ $ext  = Join-Path $root "External_Cheats"
 #                    project. Use `/I "path"` (absolute), `/std:c++17`,
 #                    `/FI"header"` (force include), or `/Zc:foo-` (relax
 #                    conformance). Empty string = no overrides.
+#   CLAppend       - arguments appended via _CL_ AFTER project options.
+#                    Use for PCH and conformance overrides that must win.
 #   ExtraMSBuild   - additional /p:Key=Value MSBuild properties for this
 #                    project, as an array of strings. Empty array = none.
-#                    Use for project-file-level overrides (PCH, forced
-#                    includes) that CLPrepend can't reach because the
-#                    project sets them later in the CL command line.
+#                    These do not override literal ClCompile item metadata
+#                    such as <PrecompiledHeader>Use</PrecompiledHeader>.
 $projects = @(
     @{
         Name         = "AC / AssaultCubeExternalBobBuilder"
@@ -55,30 +58,42 @@ $projects = @(
         Platform     = "x86"
         Toolset      = "v145"
         CLPrepend    = '/I "$(ProjectDirAbs)\imgui" /I "$(ProjectDirAbs)\imgui\backends" /std:c++17'
+        CLAppend     = ''
         ExtraMSBuild = @()
         ProjectDir   = "AC\AssaultCubeExternalBobBuilder"
     },
     @{
-        # matseee AssaultHook. Builds both the cheat DLL and the bundled
-        # injector.exe from the same solution.
+        # matseee AssaultHook. Build the DLL and injector separately so
+        # their different character-set requirements can be preserved.
         #
         # PCH quirk: the vcxproj sets PrecompiledHeader=Use with pch.h, but
         # the source .cpp files (acFunctions.cpp, dllmain.cpp, aimbot.cpp,
         # ...) do not #include "pch.h", so every non-pch.cpp file fails
-        # with C1010. Override at MSBuild time by disabling PCH entirely
-        # (-p:PrecompiledHeader=NotUsing) and clearing any forced-include
-        # of pch.h (-p:ForcedIncludeFiles=). Prevents having to touch the
-        # cloned upstream tree.
-        Name         = "AC / AssaultHook (DLL + injector)"
-        Solution     = "AC\AssaultHook\src\AssaultHook.sln"
+        # with C1010. /p:PrecompiledHeader does not override ClCompile item
+        # metadata. /Y- tells the compiler to ignore PCH options entirely.
+        # Match the upstream Debug|Win32 language standard in Release.
+        Name         = "AC / AssaultHook (DLL)"
+        Solution     = "AC\AssaultHook\src\AssaultHook.vcxproj"
         Config       = "Release"
-        Platform     = "x86"
+        Platform     = "Win32"
         Toolset      = "v145"
         CLPrepend    = ''
-        ExtraMSBuild = @(
-            "/p:PrecompiledHeader=NotUsing",
-            "/p:ForcedIncludeFiles="
-        )
+        CLAppend     = '/Y- /std:c++20'
+        ExtraMSBuild = @()
+        ProjectDir   = "AC\AssaultHook\src"
+    },
+    @{
+        # The bundled injector uses narrow process names and _stricmp, so
+        # use MultiByte (as in its Debug|Win32 configuration), not Unicode.
+        # This override must not apply to the DLL, which uses wide names.
+        Name         = "AC / AssaultHook (injector)"
+        Solution     = "AC\AssaultHook\src\injector.vcxproj"
+        Config       = "Release"
+        Platform     = "Win32"
+        Toolset      = "v145"
+        CLPrepend    = ''
+        CLAppend     = '/Y- /std:c++20'
+        ExtraMSBuild = @('/p:CharacterSet=MultiByte')
         ProjectDir   = "AC\AssaultHook\src"
     },
     @{
@@ -90,20 +105,18 @@ $projects = @(
         # Modern-MSVC conformance breaks BlackBone as vendored:
         #   * std::addressof, std::inserter no longer come in transitively
         #     from <stddef.h>; force-include <memory> and <iterator>.
-        #   * /Zc:strictStrings (default on modern MSVC) rejects the
-        #     const char[N] -> char* passes in the WoW64 shims; relax
-        #     with /Zc:strictStrings-.
-        #   * /permissive- (default on modern MSVC) enforces two-phase
-        #     template lookup that BlackBone predates; /permissive relaxes
-        #     it to the pre-VS2017 rules the code was written against.
-        # None of these change the resulting binary's behaviour; they just
-        # let the older code compile under the newer compiler defaults.
+        #   * /std:c++latest implies /permissive- on recent MSVC, enabling
+        #     strict string literal checks and stricter template parsing.
+        #     Append /permissive and then /Zc:strictStrings- so the project
+        #     cannot re-enable these checks after our compatibility flags.
+        # These retain legacy compiler behavior without editing the sources.
         Name         = "Injectors / Xenos (x86)"
         Solution     = "Injectors\Xenos\Xenos.sln"
         Config       = "Release"
         Platform     = "Win32"
         Toolset      = "v145"
-        CLPrepend    = '/Zc:strictStrings- /permissive /FI"memory" /FI"iterator"'
+        CLPrepend    = '/FI"memory" /FI"iterator"'
+        CLAppend     = '/permissive /Zc:strictStrings-'
         ExtraMSBuild = @()
         ProjectDir   = "Injectors\Xenos"
     }
@@ -131,26 +144,37 @@ foreach ($p in $projects) {
     # Compute the absolute ProjectDir so /I paths in CL are unambiguous.
     $projectDirAbs = (Resolve-Path (Join-Path $ext $p.ProjectDir)).Path
     $clPrepend = $p.CLPrepend.Replace('$(ProjectDirAbs)', $projectDirAbs)
+    $clAppend = $p.CLAppend.Replace('$(ProjectDirAbs)', $projectDirAbs)
 
-    # Snapshot and set CL for the duration of this build only.
+    # Snapshot both compiler environments; restore even when the build fails.
     $prevCL = $env:CL
-    if ([string]::IsNullOrWhiteSpace($clPrepend)) {
-        Remove-Item Env:CL -ErrorAction SilentlyContinue
-    } else {
-        $env:CL = $clPrepend
-    }
-    Write-Host "CL prepend: $clPrepend" -ForegroundColor DarkGray
-
+    $prevCLAppend = $env:_CL_
     try {
+        if ([string]::IsNullOrWhiteSpace($clPrepend)) {
+            Remove-Item Env:CL -ErrorAction SilentlyContinue
+        } else {
+            $env:CL = $clPrepend
+        }
+        if ([string]::IsNullOrWhiteSpace($clAppend)) {
+            Remove-Item Env:_CL_ -ErrorAction SilentlyContinue
+        } else {
+            $env:_CL_ = $clAppend
+        }
+        Write-Host "CL prepend: $clPrepend" -ForegroundColor DarkGray
+        Write-Host "_CL_ append: $clAppend" -ForegroundColor DarkGray
+
         # Base MSBuild arguments plus any per-project extras. Splat via an
         # array so PowerShell keeps the /p:Key=Value tokens as one argument
         # each (Start-Process-style call operator).
+        $effectiveToolset = $p.Toolset
+        if ($Toolset) { $effectiveToolset = $Toolset }
         $msbuildArgs = @(
             $sln,
             "/p:Configuration=$($p.Config)",
             "/p:Platform=$($p.Platform)",
-            "/p:PlatformToolset=$($p.Toolset)"
+            "/p:PlatformToolset=$effectiveToolset"
         )
+        if ($Rebuild) { $msbuildArgs += "/t:Rebuild" }
         if ($p.ContainsKey("ExtraMSBuild") -and $p.ExtraMSBuild.Count -gt 0) {
             $msbuildArgs += $p.ExtraMSBuild
             Write-Host "Extra MSBuild args: $($p.ExtraMSBuild -join ' ')" -ForegroundColor DarkGray
@@ -168,6 +192,11 @@ foreach ($p in $projects) {
             Remove-Item Env:CL -ErrorAction SilentlyContinue
         } else {
             $env:CL = $prevCL
+        }
+        if ($null -eq $prevCLAppend) {
+            Remove-Item Env:_CL_ -ErrorAction SilentlyContinue
+        } else {
+            $env:_CL_ = $prevCLAppend
         }
     }
 }

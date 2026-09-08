@@ -1,6 +1,6 @@
 {
   "name": "external_bobbuilder_ac",
-  "description": "External patch/aimbot (AssaultCubeExternalBobBuilder) against ac_client.exe. External validator; no self-injection. Operator-driven: the runner enters external-attacker mode, prints the AC PID, and waits for the operator to launch AssaultCubeAimbot.exe from a separate shell, let it operate against AC for ~30 seconds, close it, then press Enter in the runner shell to trigger cooldown.",
+  "description": "Native external multifeature cheat with upstream defaults (godmode, infinite ammo, aimbot and ESP enabled; noRecoil disabled). Measures a compound read/write workload. Operator-driven; keep defaults fixed across replicates.",
   "providers": [
     {
       "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
@@ -41,10 +41,19 @@
       "target_version": "1.3.0.2",
       "target_bitness": "x86",
       "attacker_bitness": "x86",
-      "windows_build": "26200",
+      "windows_build": null,
       "provenance": "See docs/external-cheats/README.md — AC/AssaultCubeExternalBobBuilder",
-      "operator_commands": "In a second PowerShell, after the runner prints the target PID, launch: & 'External_Cheats\\AC\\AssaultCubeExternalBobBuilder\\Release\\AssaultCubeAimbot.exe'  ; interact for ~30s; close the overlay window; return to the runner shell and press Enter.",
-      "notes": "No manipulation section on purpose — BobBuilder is an ImGui overlay that stays running until closed, so the runner cannot Start-Process -Wait on it. External-attacker mode is the correct model."
+      "operator_commands": "After runner prints the AC PID and the local bot match is active, launch External_Cheats\\AC\\AssaultCubeExternalBobBuilder\\Release\\AssaultCubeAimbot.exe. Keep upstream defaults: godmode, infinite ammo, aimbot and ESP ON; noRecoil OFF. Use the aimbot activation key as documented upstream consistently. Verify health/ammo effects; observe for 30 seconds, close the external tool, then press Enter in the capture shell. Keep AC alive through cooldown.",
+      "notes": "Compound native read/write workload, not a pure health-freeze case. Defaults already enable several modifications at startup, so toggling them off after launch would contaminate a claimed single-feature trace. See evaluation-plan.md.",
+      "tool_name": "bobbuilder123/AssaultCubeExternalBobBuilder",
+      "tool_version": "e7a872f291e429e077c837c3e189b3d6cae06f70",
+      "source_url": "https://github.com/bobbuilder123/AssaultCubeExternalBobBuilder",
+      "source_commit": "e7a872f291e429e077c837c3e189b3d6cae06f70",
+      "implementation_family": "bobbuilder-external",
+      "download_date": null,
+      "sha256": null,
+      "validation_status": "pilot_required",
+      "intended_active_seconds": "30"
     }
   }
 }

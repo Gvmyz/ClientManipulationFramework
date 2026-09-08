@@ -1,0 +1,51 @@
+{
+  "name": "baseline_external_ac",
+  "description": "Matched clean AC control for the external campaign: same 20s warmup, 30s observation, 15s cooldown, same bot match and provider set.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 20,
+    "cooldownSeconds": 15,
+    "observationSeconds": 30
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "metadata": {
+    "label": "benign",
+    "technique": "baseline_external_ac",
+    "class": "benign",
+    "variant": "",
+    "source": "external",
+    "evasion": null,
+    "target": "AssaultCube",
+    "extra": {
+      "target_version": "1.3.0.2",
+      "target_bitness": "x86",
+      "windows_build": null,
+      "implementation_family": "ac-clean",
+      "validation_status": "pilot_required",
+      "scripted_input": "Same autostart-baseline.cfg, ac_desert and bot configuration as external attack captures.",
+      "notes": "No attacker. Matched timing control; do not pool with shorter baseline_assaultcube traces without aligning windows."
+    }
+  }
+}

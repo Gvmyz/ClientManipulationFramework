@@ -1,6 +1,6 @@
 {
-  "name": "external_xenos_manualmap_ac",
-  "description": "Xenos manual-map delivery paired with native-loader delivery using the same synthetic TestDll. Injector implementation changes; payload identity is held constant. Operator-driven capture; no manipulation section.",
+  "name": "external_pathetic_loadlibrary_ac",
+  "description": "Public DLL with MinHook/OpenGL hook, delivered through Xenos native loader. Primary label is injection; intra-process hooks are secondary mechanisms, not a pure cross-process hook example. Operator-driven capture; no manipulation section.",
   "providers": [
     {
       "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
@@ -31,9 +31,9 @@
   },
   "metadata": {
     "label": "attack",
-    "technique": "external_xenos_manualmap_ac",
+    "technique": "external_pathetic_loadlibrary_ac",
     "class": "injection",
-    "variant": "manualmap",
+    "variant": "loadlibrary",
     "source": "external",
     "evasion": null,
     "target": "AssaultCube",
@@ -41,10 +41,10 @@
       "target_version": "1.3.0.2",
       "target_bitness": "x86",
       "attacker_bitness": "x86",
-      "tool_name": "DarthTon/Xenos",
-      "tool_version": "4bd7399bf200f9e91f411402a3c3ac7fa4623c7e",
-      "source_url": "https://github.com/DarthTon/Xenos",
-      "source_commit": "4bd7399bf200f9e91f411402a3c3ac7fa4623c7e",
+      "tool_name": "pathetic/assaultcube-internal via Xenos",
+      "tool_version": "dbffa11052a66cb78b6e2a14f5308c4c536a140a",
+      "source_url": "https://github.com/pathetic/assaultcube-internal",
+      "source_commit": "dbffa11052a66cb78b6e2a14f5308c4c536a140a",
       "source_accessed": "2026-09-08",
       "download_date": null,
       "sha256": null,
@@ -54,11 +54,12 @@
       "intended_active_seconds": "30",
       "provenance": "docs/external-cheats/README.md; fill actual tool/game hashes and runtime version before collection.",
       "attacker_executable": "External_Cheats\\Injectors\\Xenos\\build\\Win32\\Release\\Xenos.exe",
-      "operator_commands": "Launch Xenos.exe, select the printed AC PID, add the SAME x86 TestDll.dll used for synthetic AC captures and choose Manual map in Advanced. Use a fresh user-mode profile: thread hijack, manual imports, add loader reference, header erasure and kernel options OFF; keep normal TLS/exception initialization. Save a screenshot/profile of exact settings. Inject once, record Xenos status and independent payload-success evidence, observe 30 seconds, then press Enter in the capture shell, leaving AC running for cooldown.",
+      "operator_commands": "Launch Xenos.exe, select the printed AC PID, and add External_Cheats\\AC\\PatheticAssaultCube\\Release\\AssaultCube-Internal.dll. In Advanced choose Native inject; thread hijack, unlinking, PE-header erasure and kernel options OFF. Inject once. Confirm the DLL loaded and press F in AC to show its menu. Enable only ESP for 30 seconds. Leave the DLL/game running and press Enter in the capture shell; let the runner finish cooldown and terminate AC.",
       "success_criterion": "Verify intended effect using game state, tool log, or payload marker independently of detector output. Record failed pilots separately.",
       "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup.",
-      "payload_family": "cmf-testdll",
-      "payload_path": "Use the x86 TestDll path from your synthetic AC manifest; do not select the x64 build.",
+      "payload_family": "pathetic-assaultcube",
+      "secondary_mechanisms": "intra-process MinHook inline hook + window-procedure replacement; other feature writes kept off",
+      "injector_commit": "4bd7399bf200f9e91f411402a3c3ac7fa4623c7e",
       "payload_sha256": null
     }
   }

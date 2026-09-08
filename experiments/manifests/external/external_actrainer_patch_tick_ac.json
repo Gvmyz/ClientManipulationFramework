@@ -1,0 +1,62 @@
+{
+  "name": "external_actrainer_patch_tick_ac",
+  "description": "Managed C# trainer holding health through repeated WriteProcessMemory calls. Tests whether patch signals transfer from native code to .NET/PInvoke. Operator-driven capture; no manipulation section.",
+  "providers": [
+    {
+      "guid": "{F4E1897C-BB5D-5668-F1D8-040F4D8DD344}",
+      "name": "ThreatIntelligence"
+    },
+    {
+      "guid": "{22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716}",
+      "name": "KernelProcess"
+    },
+    {
+      "guid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+      "name": "Sysmon"
+    }
+  ],
+  "sessionName": "TISession",
+  "timings": {
+    "warmupSeconds": 20,
+    "cooldownSeconds": 15
+  },
+  "target": {
+    "executable": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2\\bin_win32\\ac_client.exe",
+    "arguments": "\"--home=?MYDOCUMENTS?\\My Games\\AssaultCube\\v1.3\"",
+    "workingDirectory": "C:\\Program Files (x86)\\AssaultCube 1.3.0.2"
+  },
+  "telemetry": {
+    "executable": "ProcessToolkit\\x64\\Release\\Telemetry.exe",
+    "workingDirectory": "ProcessToolkit\\x64\\Release"
+  },
+  "metadata": {
+    "label": "attack",
+    "technique": "external_actrainer_patch_tick_ac",
+    "class": "patch",
+    "variant": "tick",
+    "source": "external",
+    "evasion": null,
+    "target": "AssaultCube",
+    "extra": {
+      "target_version": "1.3.0.2",
+      "target_bitness": "x86",
+      "attacker_bitness": "x86",
+      "tool_name": "lgeniaux/AcTrainer",
+      "tool_version": "5716c9f7f5d49990f3342640751f5c8612d0d2df",
+      "source_url": "https://github.com/lgeniaux/AcTrainer",
+      "source_commit": "5716c9f7f5d49990f3342640751f5c8612d0d2df",
+      "source_accessed": "2026-09-08",
+      "download_date": null,
+      "sha256": null,
+      "windows_build": null,
+      "implementation_family": "lgeniaux-actrainer",
+      "validation_status": "pilot_required",
+      "intended_active_seconds": "30",
+      "provenance": "docs/external-cheats/README.md; fill actual tool/game hashes and runtime version before collection.",
+      "attacker_executable": "External_Cheats\\AC\\AcTrainer\\AcTrainer\\bin\\Release\\net8.0-windows\\win-x86\\AcTrainer.exe",
+      "operator_commands": "Enable only option 1 (God Mode); keep ESP, armor, ammo and grenades OFF. Observe health=1000 for 30 seconds while taking bot damage. Toggle option 1 OFF, choose 0 to quit, then press Enter in the capture shell. Source loop requests a write every 100 ms; measure actual cadence.",
+      "success_criterion": "Verify intended effect using game state, tool log, or payload marker independently of detector output. Record failed pilots separately.",
+      "notes": "Fresh AC and the same local bot match per replicate. See docs/external-cheats/evaluation-plan.md. Keep AC alive through cooldown; runner performs final cleanup."
+    }
+  }
+}

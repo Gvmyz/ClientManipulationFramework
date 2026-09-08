@@ -52,10 +52,15 @@ $projects = @(
     @{
         # matseee AssaultHook — builds both the cheat DLL (from dllmain.cpp)
         # and the bundled injector.exe from the same solution.
+        #
+        # Platform label: the .sln declares "x86", not "Win32" (same quirk
+        # as BobBuilder's .sln). MSBuild's MSB4126 fires when we pass a
+        # label the .sln does not declare. Verify with:
+        #   Get-Content <sln> | Select-String "SolutionConfigurationPlatforms" -Context 0,6
         Name       = "AC / AssaultHook (DLL + injector)"
         Solution   = "AC\AssaultHook\src\AssaultHook.sln"
         Config     = "Release"
-        Platform   = "Win32"
+        Platform   = "x86"
         Toolset    = "v145"
         CLPrepend  = ''
         ProjectDir = "AC\AssaultHook\src"

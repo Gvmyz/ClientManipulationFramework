@@ -56,16 +56,21 @@ foreach ($s in $sources) {
         continue
     }
     Write-Host "[+] Cloning $($s.Name) from $($s.Url)" -ForegroundColor Green
-    git clone $s.Url $out
-    if (-not [string]::IsNullOrWhiteSpace($s.Commit)) {
-        Push-Location $out
-        try {
+    # --recurse-submodules is required for Xenos (vendors BlackBone as a
+    # submodule at ext/BlackBone). Harmless for the others, which don't
+    # declare any submodules.
+    git clone --recurse-submodules $s.Url $out
+    Push-Location $out
+    try {
+        if (-not [string]::IsNullOrWhiteSpace($s.Commit)) {
             git checkout $s.Commit
-        } finally {
-            Pop-Location
+            # Re-sync submodules to the pinned commit's recorded state.
+            git submodule update --init --recursive
+        } else {
+            Write-Host "    [!] No pinned commit; using default branch HEAD. Record the commit hash after building." -ForegroundColor Yellow
         }
-    } else {
-        Write-Host "    [!] No pinned commit; using default branch HEAD. Record the commit hash after building." -ForegroundColor Yellow
+    } finally {
+        Pop-Location
     }
 }
 

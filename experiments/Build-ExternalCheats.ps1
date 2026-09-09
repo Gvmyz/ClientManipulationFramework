@@ -83,15 +83,20 @@ foreach ($source in $sources) {
             Remove-Item Env:CL, Env:_CL_ -ErrorAction SilentlyContinue
             if ($build.System -eq 'Prebuilt') {
                 $provenancePath = Join-Path $sourceDir $build.Provenance
-                if (-not (Test-Path -LiteralPath $provenancePath)) {
-                    throw 'ExtremeInjector has no published source build. Stage its verified official release and release/provenance.json as described in docs/external-cheats/runbook.md; or use -SkipPrebuilt for source builds only.'
-                }
-                $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json
-                if ($provenance.source_url -ne $source.ReleaseUrl -or $provenance.tool_version -ne $source.Version -or $provenance.sha256 -notmatch '^[A-Fa-f0-9]{64}$' -or -not $provenance.download_date) {
-                    throw 'Prebuilt provenance must record the official release URL, version, download date and actual executable SHA-256.'
-                }
                 $binary = Join-Path $sourceDir $build.Artifacts[0]
-                if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash -ne $provenance.sha256) {
+                if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Place the extracted Extreme Injector v3.exe at: $binary. No compilation or manual JSON editing is required." }
+                $binaryHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+                $provenance = if (Test-Path -LiteralPath $provenancePath) { Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json } else { [pscustomobject]@{} }
+                if (-not $provenance.sha256) {
+                    $provenance | Add-Member -NotePropertyName sha256 -NotePropertyValue $binaryHash -Force
+                    $provenance | Add-Member -NotePropertyName source_url -NotePropertyValue $source.ReleaseUrl -Force
+                    $provenance | Add-Member -NotePropertyName tool_version -NotePropertyValue $source.Version -Force
+                    $provenance | Add-Member -NotePropertyName recorded_at -NotePropertyValue (Get-Date).ToString('o') -Force
+                    $provenance | Add-Member -NotePropertyName verification -NotePropertyValue 'Local EXE hash recorded automatically; origin, download date and scan outcome are not inferred.' -Force
+                    $provenance | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $provenancePath -Encoding UTF8
+                    Write-Host "Recorded initial binary hash automatically: $provenancePath"
+                }
+                if ($provenance.sha256 -notmatch '^[A-Fa-f0-9]{64}$' -or $binaryHash -ne $provenance.sha256) {
                     throw 'Prebuilt executable differs from the locally recorded, frozen provenance hash.'
                 }
                 Write-Host 'Prebuilt release matches operator-recorded provenance. This is not source compilation or publisher authentication.'

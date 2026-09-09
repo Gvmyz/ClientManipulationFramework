@@ -36,11 +36,15 @@ param(
     [int]$ExtraCooldownSeconds  = 0,
 
     # Keep pilot, final and previous datasets separate. Relative to repo root.
-    [string]$RunsRoot = 'experiments\runs'
+    [string]$RunsRoot = 'experiments\runs',
+    [ValidateSet('Pilot','Final')] [string]$Phase,
+    # Optional override for a manually launched tool installed elsewhere (e.g. CE).
+    [string]$ExternalToolPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'Capture-Helpers.ps1')
 
 # ---- Small helpers (kept minimal; mirror Run-Experiment.ps1 style) ----
 
@@ -108,6 +112,14 @@ function Wait-ForService {
 $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $sourceManifestPath = Resolve-RepoPath -PathValue $ManifestPath
 $manifest = Get-Content -LiteralPath $sourceManifestPath -Raw | ConvertFrom-Json
+if (-not $manifest.metadata.PSObject.Properties['extra'] -or $null -eq $manifest.metadata.extra) {
+    $manifest.metadata | Add-Member -NotePropertyName extra -NotePropertyValue ([pscustomobject]@{}) -Force
+}
+if ($Phase) {
+    if (-not $PSBoundParameters.ContainsKey('RunsRoot')) { $RunsRoot = 'experiments\campaigns\manual-' + $Phase.ToLowerInvariant() + '\runs' }
+    if (-not $manifest.metadata.PSObject.Properties['extra']) { $manifest.metadata | Add-Member -NotePropertyName extra -NotePropertyValue ([pscustomobject]@{}) }
+    $manifest.metadata.extra | Add-Member -NotePropertyName phase -NotePropertyValue $Phase.ToLowerInvariant() -Force
+}
 
 $experimentName = if ($manifest.name) { [string]$manifest.name } else { 'experiment' }
 $timestamp      = Get-Date -Format 'yyyyMMdd_HHmmss'
@@ -224,6 +236,30 @@ if (-not (Test-Path -LiteralPath $TelemetryPPLBinary)) {
 if (-not (Get-Service -Name 'PPLRunner' -ErrorAction SilentlyContinue)) {
     throw 'PPLRunner service is not installed. Run Bootstrap-ETWTI.ps1 first.'
 }
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw 'Run this capture from PowerShell opened as Administrator.'
+}
+
+# Record actual lab inputs automatically; source manifest templates stay unchanged.
+$extra = $manifest.metadata.extra
+$artifactSpecs = @(@('target',$resolvedTargetExecutable), @('telemetry',$TelemetryPPLBinary), @('source_manifest',$sourceManifestPath))
+if ($externalManipulation) {
+    $toolPath = $ExternalToolPath
+    if (-not $toolPath -and $extra.PSObject.Properties['attacker_executable']) { $toolPath = [string]$extra.attacker_executable }
+    if ($toolPath) { $artifactSpecs += ,@('tool',$toolPath) }
+    if ($extra.PSObject.Properties['payload_path']) { $artifactSpecs += ,@('payload',[string]$extra.payload_path) }
+} else { $artifactSpecs += ,@('tool',$resolvedManipulationExecutable) }
+$artifacts = @()
+foreach ($spec in $artifactSpecs) {
+    $artifact = Get-CaptureArtifact -Role $spec[0] -Path $spec[1] -RepoRoot $script:RepoRoot
+    $artifacts += $artifact
+    if ($artifact.status -eq 'recorded') {
+        $key = switch ($artifact.role) { 'target' {'target_sha256'} 'tool' {'sha256'} 'payload' {'payload_sha256'} default {$null} }
+        if ($key) { $extra | Add-Member -NotePropertyName $key -NotePropertyValue $artifact.sha256 -Force }
+    } elseif ($artifact.role -in @('tool','payload')) { Write-Warning "Cannot record $($artifact.role) hash: $($artifact.path) ($($artifact.status)). Use -ExternalToolPath for a different tool location." }
+}
+$result['provenance'] = [ordered]@{ recordedAt=(Get-Date).ToString('o'); osVersion=[Environment]::OSVersion.VersionString; artifacts=$artifacts }
 $currentSvcStatus = (Get-Service PPLRunner).Status
 if ($currentSvcStatus -ne 'Stopped') {
     Write-Host "PPLRunner is currently $currentSvcStatus - stopping cleanly before starting fresh capture" -ForegroundColor Yellow
@@ -235,6 +271,7 @@ if ($currentSvcStatus -ne 'Stopped') {
 
 $targetProcess       = $null
 $manipulationProcess = $null
+$capturePrepared = $false
 
 try {
     # ---- 1. Start the target ----
@@ -304,23 +341,24 @@ try {
     if ($manifest.metadata.technique) { $telemetryArgs.Add('--technique'); $telemetryArgs.Add([string]$manifest.metadata.technique) }
     if ($manifest.metadata.target)    { $telemetryArgs.Add('--target');    $telemetryArgs.Add([string]$manifest.metadata.target) }
     if ($manifest.metadata.extra) {
-        foreach ($entry in $manifest.metadata.extra.PSObject.Properties) {
-            $telemetryArgs.Add('--meta'); $telemetryArgs.Add(($entry.Name + '=' + [string]$entry.Value))
-        }
+        foreach ($argument in (Get-CompactTelemetryMetadata $manifest.metadata.extra)) { $telemetryArgs.Add($argument) }
     }
 
     # runner.cfg is a single line; PPLRunner passes it verbatim to CreateProcessW.
     $runnerCfgLine = ($telemetryArgs | ForEach-Object { Quote-Argument $_ }) -join ' '
+    Assert-PPLCommandLength $runnerCfgLine
     $result.execution.commands.telemetry = $runnerCfgLine
     $result.execution.vmLoggingPid       = $targetProcess.Id
 
     # Clean prior-run artefacts and write the fresh cfg.
     Remove-Item $pplTelemetryJson, $pplTelemetryLog, $pplRunnerLogSource, $pplStopFlag -ErrorAction SilentlyContinue
+    $capturePrepared = $true
     # Write UTF-8 WITHOUT a BOM: PS 5.1's `-Encoding utf8` emits a BOM, and
     # PPLRunner feeds runner.cfg's bytes verbatim to CreateProcessW. A leading
     # BOM lands in front of the exe path, so CreateProcess fails with
     # ERROR_FILE_NOT_FOUND (2) and Telemetry never launches.
     [System.IO.File]::WriteAllText($RunnerCfgPath, $runnerCfgLine, (New-Object System.Text.UTF8Encoding($false)))
+    Copy-Item -LiteralPath $RunnerCfgPath -Destination (Join-Path $runDirectory 'runner.cfg')
 
     # ---- 4. Start the protected capture ----
     $scOut = & sc.exe start PPLRunner
@@ -458,13 +496,23 @@ try {
     Write-Host ("Run OK: {0}" -f $runDirectory) -ForegroundColor Green
 }
 catch {
+    $failureMessage = $_.Exception.Message
     # Best-effort cleanup
     New-Item -ItemType File -Force -Path $pplStopFlag -ErrorAction SilentlyContinue | Out-Null
     Wait-ForService -Name 'PPLRunner' -DesiredStatus 'Stopped' -TimeoutSeconds 10 | Out-Null
     if ($targetProcess -and -not $targetProcess.HasExited) {
         Stop-Process -Id $targetProcess.Id -Force -ErrorAction SilentlyContinue
     }
-    $result.execution.error = $_.Exception.Message
+    # Preserve startup evidence as well as successful captures.
+    foreach ($pair in @(@($pplTelemetryJson,$telemetryOutputPath), @($pplTelemetryLog,$telemetryLogPath), @($pplRunnerLogSource,$pplrunnerLogPath))) {
+        if ($capturePrepared -and (Test-Path -LiteralPath $pair[0])) { Copy-Item -LiteralPath $pair[0] -Destination $pair[1] -Force -ErrorAction SilentlyContinue }
+    }
+    & sc.exe queryex PPLRunner 2>&1 | Out-File -LiteralPath (Join-Path $runDirectory 'service-status.txt')
+    foreach ($log in @($pplrunnerLogPath,$telemetryLogPath)) {
+        if (Test-Path -LiteralPath $log) { Write-Host "Diagnostic log: $log"; Get-Content -LiteralPath $log -Tail 12 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ } }
+    }
+    Write-Host "Failed-run evidence: $runDirectory" -ForegroundColor Yellow
+    $result.execution['error'] = $failureMessage
     Write-FinalManifest -Status 'failed'
     throw
 }

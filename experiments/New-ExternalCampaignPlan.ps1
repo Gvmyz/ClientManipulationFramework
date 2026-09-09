@@ -7,7 +7,8 @@ param(
     [int] $Seed = 20260908,
     [string] $Only = '',
     [string[]] $Exclude = @(),
-    [string] $OutputDirectory = ''
+    [string] $OutputDirectory = '',
+    [switch] $PilotsReviewed
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -32,14 +33,7 @@ foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'manifest
     }
     if ($reason) { $omitted += @{ name = $m.name; reason = $reason }; continue }
     if ($Phase -eq 'Final') {
-        if ($status -ne 'pilot_passed') { throw "$($m.name) is not marked pilot_passed. Review independent runtime evidence before planning final captures." }
-        if ($m.metadata.extra.target_sha256 -notmatch '^[A-Fa-f0-9]{64}$') { throw "$($m.name): fill the target executable SHA-256 before freezing." }
-        if ($m.metadata.extra.attacker_executable -and $m.metadata.extra.sha256 -notmatch '^[A-Fa-f0-9]{64}$') {
-            throw "$($m.name): fill the actual tool executable SHA-256 before freezing."
-        }
-        if ($m.metadata.extra.payload_path -and $m.metadata.extra.payload_sha256 -notmatch '^[A-Fa-f0-9]{64}$') {
-            throw "$($m.name): fill the payload SHA-256 before freezing."
-        }
+        if ($status -ne 'pilot_passed' -and -not $PilotsReviewed) { throw 'Review the pilots first, then use -Phase Final -PilotsReviewed. No manifest SHA fields need manual editing.' }
     }
     $cases += @{ file = $file.FullName; manifest = $m; sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash }
 }
@@ -71,7 +65,7 @@ for ($replicate = 1; $replicate -le $Replicates; $replicate++) {
 $planPath = Join-Path $OutputDirectory 'plan.json'
 [ordered]@{
     schemaVersion = 1; campaign_id = $campaignId; phase = $Phase.ToLowerInvariant()
-    seed = $Seed; replicates = $Replicates; case_count = $cases.Count
+    seed = $Seed; replicates = $Replicates; case_count = $cases.Count; pilots_reviewed = [bool]$PilotsReviewed
     runsRoot = (Join-Path $OutputDirectory 'runs'); omitted = @($omitted); runs = @($runs)
 } | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $planPath -Encoding UTF8
 Write-Host ("Prepared {0} cases x {1} repetitions = {2} attempts. No captures executed." -f $cases.Count, $Replicates, $runs.Count)

@@ -94,6 +94,7 @@ static void StopEtwSession(const std::wstring& name) {
     props->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
     ULONG s = ControlTraceW(0, name.c_str(), props, EVENT_TRACE_CONTROL_STOP);
     Log(L"ControlTrace stop '%ls' -> %lu", name.c_str(), s);
+    if (s == ERROR_SUCCESS) Log(L"capture_health events_lost=%lu log_buffers_lost=%lu realtime_buffers_lost=%lu", props->EventsLost, props->LogBuffersLost, props->RealTimeBuffersLost);
 }
 
 static void WINAPI ServiceMain(DWORD, LPWSTR*) {

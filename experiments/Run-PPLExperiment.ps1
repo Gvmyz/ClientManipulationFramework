@@ -39,12 +39,16 @@ param(
     [string]$RunsRoot = 'experiments\runs',
     [ValidateSet('Pilot','Final')] [string]$Phase,
     # Optional override for a manually launched tool installed elsewhere (e.g. CE).
-    [string]$ExternalToolPath = ''
+    [string]$ExternalToolPath = '',
+    [switch]$NonInteractive,
+    [switch]$PassThru,
+    [ValidateRange(1,3600)] [int]$ManipulationTimeoutSeconds = 120
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Capture-Helpers.ps1')
+. (Join-Path $PSScriptRoot 'Campaign-Helpers.ps1')
 
 # ---- Small helpers (kept minimal; mirror Run-Experiment.ps1 style) ----
 
@@ -112,6 +116,8 @@ function Wait-ForService {
 $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $sourceManifestPath = Resolve-RepoPath -PathValue $ManifestPath
 $manifest = Get-Content -LiteralPath $sourceManifestPath -Raw | ConvertFrom-Json
+Assert-SupportedManifest $manifest
+if ($NonInteractive) { Assert-AutomatableManifest $manifest }
 if (-not $manifest.metadata.PSObject.Properties['extra'] -or $null -eq $manifest.metadata.extra) {
     $manifest.metadata | Add-Member -NotePropertyName extra -NotePropertyValue ([pscustomobject]@{}) -Force
 }
@@ -122,11 +128,10 @@ if ($Phase) {
 }
 
 $experimentName = if ($manifest.name) { [string]$manifest.name } else { 'experiment' }
-$timestamp      = Get-Date -Format 'yyyyMMdd_HHmmss'
+$timestamp      = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
 $runId          = "$timestamp-$experimentName-ppl"
 $resolvedRunsRoot = if ([IO.Path]::IsPathRooted($RunsRoot)) { $RunsRoot } else { Join-Path $script:RepoRoot $RunsRoot }
 $runDirectory   = Join-Path $resolvedRunsRoot $runId
-New-Item -ItemType Directory -Force -Path $runDirectory | Out-Null
 
 # Where our final artefacts land
 $telemetryOutputPath = Join-Path $runDirectory 'telemetry.jsonl'
@@ -170,7 +175,7 @@ if (-not $externalManipulation) {
 
 $startedAt = Get-Date
 $result = [ordered]@{
-    schemaVersion      = 1
+    schemaVersion      = 2
     sourceManifestPath = $sourceManifestPath
     runId              = $runId
     experiment         = $manifest
@@ -212,6 +217,8 @@ $result = [ordered]@{
         pplrunnerPid         = $null
         telemetryPid         = $null   # from pplrunner.log if we can grep it
         manipulationPid      = $null
+        manipulationStartedAt = $null
+        manipulationFinishedAt = $null
         operatorWindowStartedAt = $null
         operatorWindowFinishedAt = $null
         targetExitCode       = $null
@@ -224,7 +231,7 @@ $result = [ordered]@{
 function Write-FinalManifest {
     param([string]$Status)
     $result.execution.status     = $Status
-    $result.execution.finishedAt = (Get-Date).ToString('o')
+    $result.execution.finishedAt = if ($Status -eq 'running') { $null } else { (Get-Date).ToString('o') }
     $result | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $finalManifestPath -Encoding utf8
 }
 
@@ -249,7 +256,14 @@ if ($externalManipulation) {
     if (-not $toolPath -and $extra.PSObject.Properties['attacker_executable']) { $toolPath = [string]$extra.attacker_executable }
     if ($toolPath) { $artifactSpecs += ,@('tool',$toolPath) }
     if ($extra.PSObject.Properties['payload_path']) { $artifactSpecs += ,@('payload',[string]$extra.payload_path) }
-} else { $artifactSpecs += ,@('tool',$resolvedManipulationExecutable) }
+} else {
+    $artifactSpecs += ,@('tool',$resolvedManipulationExecutable)
+    $payloadCommand = ([string]$manifest.manipulation.commandLineTemplate).Replace('{repoRoot}', $script:RepoRoot)
+    if ($payloadCommand -match '(?:^|\s)--dll\s+(?:"([^"]+)"|(\S+))') {
+        $payloadPath = if ($Matches[1]) { $Matches[1] } else { $Matches[2] }
+        $artifactSpecs += ,@('payload',$payloadPath)
+    }
+}
 $artifacts = @()
 foreach ($spec in $artifactSpecs) {
     $artifact = Get-CaptureArtifact -Role $spec[0] -Path $spec[1] -RepoRoot $script:RepoRoot
@@ -262,16 +276,14 @@ foreach ($spec in $artifactSpecs) {
 $result['provenance'] = [ordered]@{ recordedAt=(Get-Date).ToString('o'); osVersion=[Environment]::OSVersion.VersionString; artifacts=$artifacts }
 $currentSvcStatus = (Get-Service PPLRunner).Status
 if ($currentSvcStatus -ne 'Stopped') {
-    Write-Host "PPLRunner is currently $currentSvcStatus - stopping cleanly before starting fresh capture" -ForegroundColor Yellow
-    New-Item -ItemType File -Force -Path $pplStopFlag | Out-Null
-    if (-not (Wait-ForService -Name 'PPLRunner' -DesiredStatus 'Stopped' -TimeoutSeconds 10)) {
-        throw 'PPLRunner did not stop within 10s. Investigate manually before rerunning.'
-    }
+    throw "PPLRunner is currently $currentSvcStatus. Finish the active capture before starting another; this runner will not interrupt it."
 }
 
 $targetProcess       = $null
 $manipulationProcess = $null
 $capturePrepared = $false
+New-Item -ItemType Directory -Path $runDirectory | Out-Null
+Write-FinalManifest -Status 'running'
 
 try {
     # ---- 1. Start the target ----
@@ -279,6 +291,7 @@ try {
         FilePath         = $resolvedTargetExecutable
         WorkingDirectory = $resolvedTargetWorkingDirectory
         PassThru         = $true
+        WindowStyle      = $(if ($NonInteractive) { 'Hidden' } else { 'Normal' })
     }
     # Start-Process rejects an empty -ArgumentList; only add it when present.
     if (-not [string]::IsNullOrWhiteSpace([string]$manifest.target.arguments)) {
@@ -317,16 +330,19 @@ try {
     # ---- 3. Build the runner.cfg command line ----
     $telemetryArgs = New-Object 'System.Collections.Generic.List[string]'
     $telemetryArgs.Add($TelemetryPPLBinary)
+    $requestedProviderGuids = @()
 
     # Providers: from manifest (new schema) or single guid (legacy)
     if ($manifest.PSObject.Properties['providers'] -and $manifest.providers) {
         foreach ($entry in $manifest.providers) {
             $guid = [string]$entry.guid
+            $requestedProviderGuids += $guid
             $name = if ($entry.PSObject.Properties['name']) { [string]$entry.name } else { '' }
             $spec = if ([string]::IsNullOrWhiteSpace($name)) { $guid } else { "${guid}:${name}" }
             $telemetryArgs.Add('--provider'); $telemetryArgs.Add($spec)
         }
     } elseif ($manifest.PSObject.Properties['providerGuid']) {
+        $requestedProviderGuids += [string]$manifest.providerGuid
         $telemetryArgs.Add('--provider'); $telemetryArgs.Add([string]$manifest.providerGuid)
     } else {
         throw "Manifest declares neither 'providers' nor 'providerGuid'."
@@ -351,7 +367,9 @@ try {
     $result.execution.vmLoggingPid       = $targetProcess.Id
 
     # Clean prior-run artefacts and write the fresh cfg.
-    Remove-Item $pplTelemetryJson, $pplTelemetryLog, $pplRunnerLogSource, $pplStopFlag -ErrorAction SilentlyContinue
+    foreach ($oldArtifact in @($pplTelemetryJson, $pplTelemetryLog, $pplRunnerLogSource, $pplStopFlag)) {
+        if (Test-Path -LiteralPath $oldArtifact) { Remove-Item -LiteralPath $oldArtifact -ErrorAction Stop }
+    }
     $capturePrepared = $true
     # Write UTF-8 WITHOUT a BOM: PS 5.1's `-Encoding utf8` emits a BOM, and
     # PPLRunner feeds runner.cfg's bytes verbatim to CreateProcessW. A leading
@@ -378,6 +396,13 @@ try {
         throw "Telemetry never confirmed vm-logging opt-in. Check $pplTelemetryLog."
     }
     Start-Sleep -Seconds ([int]$manifest.timings.warmupSeconds)
+    # This snapshot makes existing modules explicit instead of classifying
+    # pre-capture module addresses as orphan threads.
+    try {
+        $moduleSnapshot = @($targetProcess.Modules | ForEach-Object { [ordered]@{ base=('0x{0:X}' -f $_.BaseAddress.ToInt64()); size=$_.ModuleMemorySize; path=$_.FileName } })
+        [ordered]@{ targetPid=$targetProcess.Id; recordedAt=(Get-Date).ToString('o'); modules=$moduleSnapshot } |
+            ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $runDirectory 'target-modules-before.json') -Encoding UTF8
+    } catch { Write-Warning "Initial module snapshot unavailable: $($_.Exception.Message)" }
 
     # ---- 6. Run the manipulation ----
     if ($externalManipulation) {
@@ -390,6 +415,7 @@ try {
         }
 
         if ($observationSeconds -gt 0) {
+            $result.execution.manipulationStartedAt = (Get-Date).ToString('o')
             # Baseline observation window — no attacker, just watch the target
             # for a fixed duration. Used for `baseline_*` manifests.
             Write-Host ''
@@ -399,6 +425,7 @@ try {
             Write-Host ('  Observing for {0} seconds...' -f $observationSeconds)
             Write-Host '================================================================' -ForegroundColor Cyan
             Start-Sleep -Seconds $observationSeconds
+            $result.execution.manipulationFinishedAt = (Get-Date).ToString('o')
             $result.execution.commands.manipulation = ('<baseline observation {0}s>' -f $observationSeconds)
             $result.execution.manipulationExitCode  = 0
         } else {
@@ -426,7 +453,24 @@ try {
             Write-Host '================================================================' -ForegroundColor Cyan
             Write-Host ''
             $result.execution.operatorWindowStartedAt = (Get-Date).ToString('o')
-            [void](Read-Host 'Press Enter to continue (Ctrl+C to abort)')
+            $toolPidText = Read-Host 'Tool PID(s), comma-separated; leave blank if unknown (keep tool open now)'
+            $toolPids = @()
+            $identities = @()
+            foreach ($part in ($toolPidText -split ',')) {
+                $parsedPid = 0
+                if (-not [int]::TryParse($part.Trim(), [ref]$parsedPid) -or $parsedPid -le 0) { continue }
+                $toolProcess = Get-Process -Id $parsedPid -ErrorAction Stop
+                $toolPids += $parsedPid
+                $identities += [ordered]@{ pid=$parsedPid; path=$toolProcess.Path; startedAt=$toolProcess.StartTime.ToString('o'); sha256=(Get-FileHash -LiteralPath $toolProcess.Path -Algorithm SHA256).Hash }
+            }
+            [void](Read-Host 'Press Enter immediately BEFORE performing the action (read-only controls: before attaching)')
+            $result.execution.manipulationStartedAt = (Get-Date).ToString('o')
+            $answer = Read-Host 'After the prescribed observation: S=effect verified, F=failed, U=unknown'
+            $result.execution.manipulationFinishedAt = (Get-Date).ToString('o')
+            $evidence = Read-Host 'Brief independent evidence (marker/value/feature and target PID), or reason unknown/failed'
+            $effect = if ($answer -match '^[sS]$') { $true } elseif ($answer -match '^[fF]$') { $false } else { $null }
+            if ($effect -eq $true -and [string]::IsNullOrWhiteSpace($evidence)) { $effect = $null }
+            $result['outcome'] = [ordered]@{ effect_verified=$effect; effect_evidence=@($evidence | Where-Object { $_ }); tool_pids=$toolPids; tool_identities=$identities; timing=@{ action_started_at=$result.execution.manipulationStartedAt; observation_ended_at=$result.execution.manipulationFinishedAt; time_basis='Operator marked immediately before action; not an exact API timestamp.' } }
             $result.execution.operatorWindowFinishedAt = (Get-Date).ToString('o')
             $result.execution.commands.manipulation = '<external attacker>'
             # The runner did not execute the tool and cannot know its exit code.
@@ -436,6 +480,7 @@ try {
         $manipulationCommandLine = Resolve-Template `
             -Template ([string]$manifest.manipulation.commandLineTemplate) `
             -Tokens $tokens
+        if ($manipulationCommandLine -match '\{[^}]+\}') { throw "Unresolved target-info token in command: $manipulationCommandLine" }
         $result.execution.commands.manipulation = ('{0} {1}' -f (Quote-Argument $resolvedManipulationExecutable), $manipulationCommandLine).Trim()
 
         # Persist the attacker's console output — without redirection Start-Process
@@ -450,17 +495,25 @@ try {
             FilePath               = $resolvedManipulationExecutable
             WorkingDirectory       = $resolvedManipulationWorkingDirectory
             PassThru               = $true
-            Wait                   = $true
-            NoNewWindow            = $true
+            WindowStyle            = 'Hidden'
             RedirectStandardOutput = $manipulationStdoutPath
             RedirectStandardError  = $manipulationStderrPath
         }
         if (-not [string]::IsNullOrWhiteSpace($manipulationCommandLine)) {
             $manipulationParams.ArgumentList = $manipulationCommandLine
         }
+        $result.execution.manipulationStartedAt = (Get-Date).ToString('o')
         $manipulationProcess = Start-Process @manipulationParams
         $result.execution.manipulationPid      = $manipulationProcess.Id
+        if (-not $manipulationProcess.WaitForExit($ManipulationTimeoutSeconds * 1000)) {
+            Stop-Process -Id $manipulationProcess.Id -Force
+            throw "Manipulation exceeded $ManipulationTimeoutSeconds seconds; attempt retained as failed."
+        }
+        $manipulationProcess.Refresh()
+        $result.execution.manipulationFinishedAt = (Get-Date).ToString('o')
         $result.execution.manipulationExitCode = $manipulationProcess.ExitCode
+        $probePath = Join-Path $resolvedManipulationWorkingDirectory ("usermode-hooks-{0}-{1}.log" -f $targetProcess.Id, $manipulationProcess.Id)
+        if (Test-Path -LiteralPath $probePath) { Copy-Item -LiteralPath $probePath -Destination (Join-Path $runDirectory 'usermode-hooks.log') }
     }
 
     # ---- 7. Cooldown so ETW flushes, then request graceful shutdown ----
@@ -475,10 +528,35 @@ try {
     if (Test-Path -LiteralPath $pplTelemetryJson) {
         Copy-Item -LiteralPath $pplTelemetryJson -Destination $telemetryOutputPath -Force
     } else {
-        Write-Warning "No ti_test.json produced - capture is empty."
+        throw 'No telemetry file was produced. A missing file is a capture failure; an existing empty file is evaluated using capture health.'
     }
     if (Test-Path -LiteralPath $pplTelemetryLog)    { Copy-Item -LiteralPath $pplTelemetryLog    -Destination $telemetryLogPath -Force }
     if (Test-Path -LiteralPath $pplRunnerLogSource) { Copy-Item -LiteralPath $pplRunnerLogSource -Destination $pplrunnerLogPath -Force }
+    $telemetryText = if (Test-Path -LiteralPath $telemetryLogPath) { Get-Content -LiteralPath $telemetryLogPath -Raw } else { '' }
+    $runnerText = if (Test-Path -LiteralPath $pplrunnerLogPath) { Get-Content -LiteralPath $pplrunnerLogPath -Raw } else { '' }
+    $result['captureQuality'] = Get-CaptureQuality -TelemetryLog $telemetryText -RunnerLog $runnerText -ProviderGuids $requestedProviderGuids
+    $result.captureQuality | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDirectory 'capture-quality.json') -Encoding UTF8
+    $targetProcess.Refresh()
+    $targetSurvived = -not $targetProcess.HasExited
+    if (-not $result.Contains('outcome')) {
+        $stdout = if (Test-Path -LiteralPath (Join-Path $runDirectory 'manipulation.stdout.log')) { Get-Content -LiteralPath (Join-Path $runDirectory 'manipulation.stdout.log') -Raw } else { '' }
+        $isBaseline = $manifest.metadata.label -in @('benign','baseline') -or $manifest.metadata.technique -eq 'none'
+        $attachMarker = $false
+        if ($result.execution.commands.manipulation -match '(?i)TestDll\.dll' -and $targetSurvived) { $attachMarker = Test-PayloadAttachMarker -TargetPid $targetProcess.Id -TimeoutSeconds 2 }
+        $result['outcome'] = Get-AutomaticOutcome -Command $result.execution.commands.manipulation -ExitCode $result.execution.manipulationExitCode -TargetSurvived $targetSurvived -Baseline $isBaseline -Stdout $stdout -AttachMarkerObserved $attachMarker
+    }
+    $result.outcome['target_survived'] = $targetSurvived
+    if ($externalManipulation -and $extra.PSObject.Properties['payload_path'] -and $extra.payload_path -match '(?i)TestDll\.dll$' -and $targetSurvived) {
+        $markerObserved = Test-PayloadAttachMarker -TargetPid $targetProcess.Id -TimeoutSeconds 2
+        $result.outcome['payload_attach_marker_observed'] = $markerObserved
+        if ($markerObserved -and $result.outcome.effect_verified -ne $false) {
+            $result.outcome['effect_verified'] = $true
+            $result.outcome['effect_evidence'] = @($result.outcome.effect_evidence) + "Target-specific TestDll attach marker observed for PID $($targetProcess.Id)."
+        }
+    }
+    if ($externalManipulation -and $observationSeconds -le 0) {
+        $result.outcome | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runDirectory 'operator-record.json') -Encoding UTF8
+    }
 
     # Extract the PPL child PID from the log for the manifest (optional but nice).
     if (Test-Path -LiteralPath $pplrunnerLogPath) {
@@ -493,9 +571,11 @@ try {
     if ($targetProcess) { $result.execution.targetExitCode = $targetProcess.ExitCode }
 
     Write-FinalManifest -Status 'completed'
-    Write-Host ("Run OK: {0}" -f $runDirectory) -ForegroundColor Green
+    Write-Host ("Capture finished: {0}; verified effect: {1}" -f $runDirectory, $result.outcome.effect_verified) -ForegroundColor Green
+    if ($PassThru) { Write-Output ([pscustomobject]@{ runDirectory=$runDirectory; manifest=$finalManifestPath; outcome=$result.outcome; captureQuality=$result.captureQuality }) }
 }
 catch {
+    $_.Exception.Data['RunDirectory'] = $runDirectory
     $failureMessage = $_.Exception.Message
     # Best-effort cleanup
     New-Item -ItemType File -Force -Path $pplStopFlag -ErrorAction SilentlyContinue | Out-Null

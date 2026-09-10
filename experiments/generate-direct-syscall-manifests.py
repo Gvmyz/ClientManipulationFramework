@@ -8,11 +8,9 @@ sibling with:
   - `metadata.evasion` set to "direct_syscall"
   - `name` suffixed with "_direct_syscall"
 
-This is the RQ3 counterpart to generate-rq3-manifests.py's ti_only
-sweep. Where ti_only tests "what if the defender loses user-mode
-providers?", direct_syscall tests "what if the attacker never touches
-user-mode APIs in the first place?" — same conclusion (only ETW-TI
-matters), two independent evidence paths.
+Direct syscalls and provider subscription are independent factors. This
+legacy generator only supports x64. Prefer New-AutomatedCampaignPlan.ps1
+for matched normal/direct executions with the same probe and provider set.
 
 Run from the repo root:
     python experiments\\generate-direct-syscall-manifests.py
@@ -53,6 +51,9 @@ BASELINE_MANIFESTS: list[str] = [
 
 
 def transform(baseline: dict) -> dict:
+    executable = (baseline.get("manipulation") or {}).get("executable", "")
+    if "Win32" in executable or not executable:
+        raise ValueError("Direct-syscall generation requires an x64 ProcessToolkit manifest")
     out = copy.deepcopy(baseline)
     out["name"] = f"{baseline['name']}_direct_syscall"
 
@@ -82,6 +83,9 @@ def main() -> int:
             missing.append(stem)
             continue
         baseline = json.loads(src.read_text(encoding="utf-8"))
+        if "Win32" in baseline.get("manipulation", {}).get("executable", ""):
+            print(f"unsupported x86 direct-syscall manifest skipped: {stem}")
+            continue
         dst = MANIFESTS / f"{stem}_direct_syscall.json"
         dst.write_text(
             json.dumps(transform(baseline), indent=2) + "\n",

@@ -4,12 +4,12 @@ For each baseline manifest listed in BASELINE_MANIFESTS, produce a sibling
 manifest with:
   - `providers`  reduced to ETW-TI only (Sysmon + KernelProcess removed)
   - `name`       suffixed with "_ti_only"
-  - `metadata.evasion` set to "ti_only"
+  - `metadata.evasion` remains empty; provider_profile identifies the ablation
 
 Run from the repo root:
     python experiments\\generate-rq3-manifests.py
 
-Rerun freely — overwrites existing _ti_only siblings, does not touch
+Rerun freely â€” overwrites existing _ti_only siblings, does not touch
 baselines.
 """
 
@@ -57,7 +57,9 @@ def transform(baseline: dict) -> dict:
     out["name"] = f"{baseline['name']}_ti_only"
     out["providers"] = [TI_PROVIDER]
     metadata = out.setdefault("metadata", {})
-    metadata["evasion"] = "ti_only"
+    metadata["evasion"] = None
+    metadata.setdefault("extra", {})["provider_profile"] = "ti_only"
+    metadata["extra"]["experiment_kind"] = "provider_ablation"
     return out
 
 

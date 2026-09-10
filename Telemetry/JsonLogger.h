@@ -11,6 +11,13 @@
 #include <string_view>
 
 struct TelemetryEvent {
+    ULONG decoder_version{2};
+    ULONG event_id{};
+    ULONG event_version{};
+    ULONG header_flags{};
+    std::wstring provider_guid;
+    std::wstring raw_user_data_hex;
+    std::map<std::wstring, std::wstring> decode_errors;
 	std::wstring utc_time;
 	std::wstring name;
 	std::wstring process_name;
@@ -202,6 +209,13 @@ private:
 
 		bool first = true;
 		append_json_field(out, L"utc_time", event.utc_time, first);
+        append_json_field(out, L"decoder_version", event.decoder_version, first);
+        append_json_field(out, L"event_id", event.event_id, first);
+        append_json_field(out, L"event_version", event.event_version, first);
+        append_json_field(out, L"header_flags", event.header_flags, first);
+        append_json_field(out, L"provider_guid", event.provider_guid, first);
+        append_json_map_field(out, L"decode_errors", event.decode_errors, first);
+        if (!event.raw_user_data_hex.empty()) append_json_field(out, L"raw_user_data_hex", event.raw_user_data_hex, first);
 		append_json_field(out, L"provider_name", event.provider_name, first);
 		append_json_field(out, L"name", event.name, first);
 		append_json_field(out, L"process_name", event.process_name, first);

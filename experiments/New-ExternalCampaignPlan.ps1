@@ -8,12 +8,13 @@ param(
     [string] $Only = '',
     [string[]] $Exclude = @(),
     [string] $OutputDirectory = '',
-    [switch] $PilotsReviewed
+    [switch] $PilotsReviewed,
+    [switch] $IncludeOptional
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $campaignId = $Phase.ToLowerInvariant() + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff')
-if ($Replicates -eq 0) { $Replicates = if ($Phase -eq 'Pilot') { 2 } else { 3 } }
+if ($Replicates -eq 0) { $Replicates = if ($Phase -eq 'Pilot') { 2 } else { 5 } }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot ('campaigns\' + $campaignId) }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw "Output already exists; refusing to overwrite a campaign: $OutputDirectory" }
@@ -25,6 +26,7 @@ foreach ($file in (Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'manifest
     $status = [string]$m.metadata.extra.validation_status
     $reason = ''
     if ($status -like 'retired*') { $reason = $status }
+    elseif ($m.metadata.extra.PSObject.Properties['campaign_optional'] -and $m.metadata.extra.campaign_optional -and -not $IncludeOptional) { $reason = 'Optional condition; use -IncludeOptional to select it.' }
     elseif ($Only -and $m.name -notlike "*$Only*") { $reason = 'Only filter' }
     else {
         foreach ($pattern in $Exclude) {

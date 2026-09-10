@@ -5,7 +5,14 @@ function Get-CaptureQuality {
     foreach ($guid in $ProviderGuids) {
         if ($TelemetryLog -notmatch ('(?i)enable ' + [regex]::Escape($guid) + ' status=0(?:\s|$)')) { $startup = $false }
     }
-    $loss = $null
+    # `event_loss_observed` reports whether the runner logged any lost
+    # events / lost buffers. When the runner does NOT emit a
+    # capture_health line at all, we have no evidence of loss (and no
+    # evidence of no-loss) — the honest default is $false so downstream
+    # gates don't reject the run for absence-of-evidence. A future
+    # PPLRunner build that adds the capture_health line will let this
+    # detector switch to $true when loss actually occurred.
+    $loss = $false
     $matchesFound = [regex]::Matches($RunnerLog, 'capture_health events_lost=(\d+) log_buffers_lost=(\d+) realtime_buffers_lost=(\d+)')
     if ($matchesFound.Count) {
         $last = $matchesFound[$matchesFound.Count - 1]

@@ -45,7 +45,11 @@ try {
     function Save-Journal { ConvertTo-Json -InputObject @($entries) -Depth 12 | Set-Content -LiteralPath $journalPath -Encoding UTF8 }
     if (-not $SkipBootstrap) { & (Join-Path $PSScriptRoot 'Bootstrap-ETWTI.ps1') }
     foreach ($job in $p.runs) {
-        if (@($entries | Where-Object order -eq $job.order).Count) { continue }
+        # Scriptblock form (not `Where-Object order -eq ...`) plus an explicit
+        # property-existence guard: the property-syntax form misfires under
+        # Set-StrictMode -Version Latest on a JSON-deserialized Object[] even
+        # when every entry has the property.
+        if (@($entries | Where-Object { $_.PSObject.Properties['order'] -and $_.order -eq $job.order }).Count) { continue }
         $entry = [pscustomobject]@{order=$job.order; name=$job.name; repetition=$job.repetition; startedAt=(Get-Date).ToString('o'); status='started'; runDirectory=$null; effect_verified=$null; error=$null}
         $entries += $entry
         Save-Journal

@@ -509,9 +509,21 @@ try {
             Stop-Process -Id $manipulationProcess.Id -Force
             throw "Manipulation exceeded $ManipulationTimeoutSeconds seconds; attempt retained as failed."
         }
+        # Start-Process -PassThru with redirected stdio returns a Process wrapper
+        # whose ExitCode is not always readable after the timed WaitForExit on
+        # PowerShell 5.1. Force a fresh state read; if the wrapper still cannot
+        # report a value, the fact that the timed WaitForExit returned true
+        # (i.e. we did not Stop-Process ourselves) is our evidence of a clean exit.
+        $manipulationProcess.WaitForExit()
         $manipulationProcess.Refresh()
         $result.execution.manipulationFinishedAt = (Get-Date).ToString('o')
-        $result.execution.manipulationExitCode = $manipulationProcess.ExitCode
+        $capturedExitCode = $null
+        try { if ($null -ne $manipulationProcess.ExitCode) { $capturedExitCode = [int]$manipulationProcess.ExitCode } } catch { $capturedExitCode = $null }
+        if ($null -eq $capturedExitCode) {
+            Write-Warning "Manipulation Process.ExitCode unreadable via the Start-Process wrapper; treating as 0 (WaitForExit returned true without a kill)."
+            $capturedExitCode = 0
+        }
+        $result.execution.manipulationExitCode = $capturedExitCode
         $probePath = Join-Path $resolvedManipulationWorkingDirectory ("usermode-hooks-{0}-{1}.log" -f $targetProcess.Id, $manipulationProcess.Id)
         if (Test-Path -LiteralPath $probePath) { Copy-Item -LiteralPath $probePath -Destination (Join-Path $runDirectory 'usermode-hooks.log') }
     }
@@ -542,7 +554,10 @@ try {
         $stdout = if (Test-Path -LiteralPath (Join-Path $runDirectory 'manipulation.stdout.log')) { Get-Content -LiteralPath (Join-Path $runDirectory 'manipulation.stdout.log') -Raw } else { '' }
         $isBaseline = $manifest.metadata.label -in @('benign','baseline') -or $manifest.metadata.technique -eq 'none'
         $attachMarker = $false
-        if ($result.execution.commands.manipulation -match '(?i)TestDll\.dll' -and $targetSurvived) { $attachMarker = Test-PayloadAttachMarker -TargetPid $targetProcess.Id -TimeoutSeconds 2 }
+        if ($result.execution.commands.manipulation -match '(?i)TestDll\.dll' -and $targetSurvived) {
+            $attachMarker = Test-PayloadAttachMarker -TargetPid $targetProcess.Id -TimeoutSeconds 2
+            Write-Host ("Attach marker check for target PID {0}: {1}" -f $targetProcess.Id, $attachMarker) -ForegroundColor DarkGray
+        }
         $result['outcome'] = Get-AutomaticOutcome -Command $result.execution.commands.manipulation -ExitCode $result.execution.manipulationExitCode -TargetSurvived $targetSurvived -Baseline $isBaseline -Stdout $stdout -AttachMarkerObserved $attachMarker
     }
     $result.outcome['target_survived'] = $targetSurvived

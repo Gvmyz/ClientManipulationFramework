@@ -60,6 +60,25 @@ calls retain the skipped prefix; omit `-StartAt` unless you intend another
 explicit restart. A missing or malformed journal now stops ordinary resume
 instead of silently starting over.
 
+If a restart reports `PPLRunner is currently Running`, the protected service
+has not stopped. Bootstrap checks its configuration but does not stop a
+capture. If the previous capture was interrupted and no other capture is
+intentionally running, request shutdown from an Administrator PowerShell:
+
+```powershell
+New-Item -ItemType File -Path 'C:\elam\stop.flag' -Force | Out-Null
+(Get-Service -Name PPLRunner).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+Get-Service -Name PPLRunner
+```
+
+The service polls this flag and requests that its ETW session stop before
+waiting for the telemetry child to exit. Once the status is `Stopped`, retry
+the blocked order using `-Resume -StartAt 44` (substitute its actual order).
+Plain `-Resume` skips that recorded failure even when no capture was launched.
+If the wait times out, inspect `C:\elam\pplrunner.log` and
+`C:\elam\ti_test.json.log` before retrying. The service clears the old stop
+flag at its next start; no binary rebuild is needed for this recovery.
+
 The runner supports both Windows PowerShell 5.1 and PowerShell 7, including
 recovery of the nested `value`/`Count` journal wrapper produced by the old
 5.1 reader. Checkpoints are written to a temporary file and replaced only

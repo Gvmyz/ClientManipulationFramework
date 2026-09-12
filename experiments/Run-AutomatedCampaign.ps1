@@ -175,7 +175,7 @@ try {
             Write-Warning $entry.error
         }
         Save-Journal
-        if ($entry.status -ne 'effect_verified') { throw "Campaign paused after $($entry.status). Inspect its evidence, then use -Resume for the remaining schedule." }
+        if ($entry.status -ne 'effect_verified') { throw "Campaign paused after $($entry.status) at order $($job.order). Inspect its evidence and resolve the failure. Use -Resume -StartAt $($job.order) to retry from this order; plain -Resume skips this recorded attempt and continues with the remaining schedule." }
         if ($InterRunSleepSeconds) { Start-Sleep -Seconds $InterRunSleepSeconds }
     }
     $entries | Group-Object status | Select-Object Name,Count | Format-Table -AutoSize

@@ -108,7 +108,7 @@ Invoke-Case $c -Resume -StartAt 44 -PreflightOnly
 Assert (-not (Test-Path -LiteralPath $c.journal)) 'Preflight modified the journal.'
 Assert-Calls $c ''
 Set-Content -LiteralPath (Join-Path $c.directory 'stop-at.txt') -Value 44
-Expect-Failure { Invoke-Case $c -Resume -StartAt 44 } 'Campaign paused after capture_failed'
+Expect-Failure { Invoke-Case $c -Resume -StartAt 44 } 'Campaign paused after capture_failed at order 44.*-Resume -StartAt 44.*plain -Resume skips'
 Assert-Calls $c '44'
 $read = @(Read-Entries $c.journal)
 Assert ($read.Count -eq 44 -and $read[-1].status -eq 'capture_failed') 'Recovery did not persist the failed attempt.'

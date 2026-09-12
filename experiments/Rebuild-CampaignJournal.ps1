@@ -5,24 +5,34 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $plan = Get-Content -Raw -LiteralPath (Join-Path $CampaignDirectory 'plan.json') | ConvertFrom-Json
-Write-Host "Plan has $($plan.runs.Count) scheduled attempts."
-$doneOrders = 1..$DoneOrdersUpTo
-$rebuilt = foreach ($job in $plan.runs) {
-    if ($doneOrders -contains $job.order) {
-        [pscustomobject]@{
-            order           = $job.order
-            name            = $job.name
-            repetition      = $job.repetition
+$total = [int]$plan.runs.Count
+Write-Host ("Plan has {0} scheduled attempts; plan.runs type is {1}." -f $total, $plan.runs.GetType().FullName)
+# Use ArrayList + explicit indexing so we never depend on pipeline enumeration
+# quirks (which have been dropping objects into a single merged PSObject).
+$rebuilt = New-Object System.Collections.ArrayList
+for ($i = 0; $i -lt $total; $i++) {
+    $j = $plan.runs[$i]
+    $ord = [int]$j.order
+    if ($ord -le $DoneOrdersUpTo) {
+        [void]$rebuilt.Add([pscustomobject]@{
+            order           = $ord
+            name            = [string]$j.name
+            repetition      = [int]$j.repetition
             startedAt       = '2026-09-12T07:48:48+01:00'
             status          = 'effect_verified'
             runDirectory    = $null
             effect_verified = $true
             error           = 'Reconstructed after journal loss; first-pass run data preserved off-VM.'
-        }
+        })
     }
 }
+Write-Host ("Built {0} entries in ArrayList; first order = {1}, last order = {2}." -f $rebuilt.Count, $rebuilt[0].order, $rebuilt[$rebuilt.Count - 1].order)
+$asArray = $rebuilt.ToArray([pscustomobject])
 $journal = Join-Path $CampaignDirectory 'attempts.json'
-ConvertTo-Json -InputObject @($rebuilt) -Depth 12 | Set-Content -LiteralPath $journal -Encoding UTF8
+ConvertTo-Json -InputObject $asArray -Depth 12 | Set-Content -LiteralPath $journal -Encoding UTF8
+$check = @(Get-Content -Raw -LiteralPath $journal | ConvertFrom-Json)
+Write-Host ("Written and re-read: {0} entries; first={1}; last={2}." -f $check.Count, $check[0].order, $check[-1].order)
 $firstOpen = $DoneOrdersUpTo + 1
+if ($check.Count -ne $DoneOrdersUpTo) { throw "Rebuild produced $($check.Count) entries, expected $DoneOrdersUpTo. Do NOT resume until this is fixed." }
 Write-Host "Journal rewritten with $($rebuilt.Count) entries at $journal."
 Write-Host "Resume will start at order $firstOpen."

@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)] [string]$Plan,
     [switch]$PreflightOnly,
     [switch]$Resume,
+    [ValidateRange(1,2147483647)] [int]$StartAt = 1,
     [switch]$SkipBootstrap,
     [ValidateRange(0,60)] [int]$InterRunSleepSeconds = 3
 )

@@ -4,6 +4,8 @@ param(
     [Parameter(Mandatory)] [string]$Plan,
     [switch]$PreflightOnly,
     [switch]$Resume,
+    # Explicit recovery: rerun this schedule order and everything after it.
+    [ValidateRange(1,2147483647)] [int]$StartAt = 1,
     [switch]$SkipBootstrap,
     [switch]$AllowManualTools,
     [ValidateRange(0,60)] [int]$InterRunSleepSeconds = 3
@@ -14,6 +16,17 @@ Set-StrictMode -Version Latest
 $repo = Split-Path $PSScriptRoot -Parent
 $planPath = (Resolve-Path -LiteralPath $Plan).Path
 $p = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
+$explicitStart = $PSBoundParameters.ContainsKey('StartAt')
+if ($explicitStart -and -not $Resume) { throw '-StartAt requires -Resume. It explicitly restarts the schedule at the supplied order.' }
+$jobsByOrder = @{}
+foreach ($job in $p.runs) {
+    $order = 0
+    if (-not [int]::TryParse([string]$job.order, [ref]$order) -or $order -lt 1 -or $jobsByOrder.ContainsKey($order)) {
+        throw 'The plan must contain unique positive integer order values.'
+    }
+    $jobsByOrder[$order] = $job
+}
+if ($explicitStart -and -not $jobsByOrder.ContainsKey($StartAt)) { throw "StartAt $StartAt is not a scheduled order in this plan." }
 foreach ($job in $p.runs) {
     if ((Get-FileHash -LiteralPath $job.manifest -Algorithm SHA256).Hash -ne $job.manifest_sha256) { throw "Frozen manifest changed: $($job.manifest)" }
     $m = Get-Content -LiteralPath $job.manifest -Raw | ConvertFrom-Json
@@ -30,28 +43,118 @@ foreach ($job in $p.runs) {
     }
 }
 Write-Host "Manifest/binary preflight passed for $($p.runs.Count) scheduled attempts."
-if ($PreflightOnly) { return }
-$lockPath = Join-Path $PSScriptRoot 'campaigns\active-capture.lock'
-New-Item -ItemType Directory -Path (Split-Path $lockPath) -Force | Out-Null
-try { $lock = [IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
-catch { throw 'Another automated campaign holds the capture lock. Run campaigns serially.' }
 $journalPath = Join-Path (Split-Path $planPath) 'attempts.json'
-$entries = @()
+$entries = New-Object 'System.Collections.Generic.List[object]'
+
+function Add-JournalEntry($Value) {
+    # Windows PowerShell 5.1 does not enumerate ConvertFrom-Json arrays in
+    # a pipeline. Repeated use of @(... | ConvertFrom-Json) used to nest
+    # the journal, making the order-property check miss every old attempt.
+    if ($Value -is [array]) {
+        foreach ($item in $Value) { Add-JournalEntry $item }
+        return
+    }
+    if ($null -eq $Value) { throw 'The journal contains a null entry.' }
+    if (-not $Value.PSObject.Properties['order']) {
+        # Recover the value/Count wrapper written by the old 5.1 reader.
+        if ($Value.PSObject.Properties['value'] -and $Value.value -is [array] -and $Value.PSObject.Properties['Count'] -and $Value.Count -eq $Value.value.Count) {
+            foreach ($item in $Value.value) { Add-JournalEntry $item }
+            return
+        }
+        throw 'A journal entry has no order.'
+    }
+    $order = 0
+    if ($Value.order -is [array] -or -not [int]::TryParse([string]$Value.order, [ref]$order) -or -not $jobsByOrder.ContainsKey($order)) {
+        throw 'A journal entry has an invalid or unknown order.'
+    }
+    $job = $jobsByOrder[$order]
+    if (($Value.PSObject.Properties['name'] -and $Value.name -ne $job.name) -or
+        ($Value.PSObject.Properties['repetition'] -and $Value.repetition -ne $job.repetition)) {
+        throw "Journal order $order does not match the frozen plan."
+    }
+    [void]$entries.Add($Value)
+}
+
+function Save-Journal {
+    # Finish writing beside the journal before replacing it. Disk-full or
+    # interrupted writes must not truncate the last committed checkpoint.
+    $temporary = $journalPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        $json = ConvertTo-Json -InputObject $entries.ToArray() -Depth 12
+        [IO.File]::WriteAllText($temporary, $json, [Text.UTF8Encoding]::new($false))
+        if (Test-Path -LiteralPath $journalPath) {
+            [IO.File]::Replace($temporary, $journalPath, ($journalPath + '.bak'), $true)
+        } else {
+            [IO.File]::Move($temporary, $journalPath)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) }
+    }
+}
+
+$lockPath = Join-Path $PSScriptRoot 'campaigns\active-capture.lock'
+$lock = $null
+if (-not $PreflightOnly) {
+    New-Item -ItemType Directory -Path (Split-Path $lockPath) -Force | Out-Null
+    try { $lock = [IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
+    catch { throw 'Another automated campaign holds the capture lock. Run campaigns serially.' }
+}
 try {
     if (Test-Path -LiteralPath $journalPath) {
-        if (-not $Resume) { throw 'Campaign already started. Use -Resume to continue pending entries; attempted entries are never silently rerun.' }
-        $entries = @(Get-Content -LiteralPath $journalPath -Raw | ConvertFrom-Json)
+        if (-not $Resume -and -not $PreflightOnly) { throw 'Campaign already started. Use -Resume to continue pending entries; attempted entries are never silently rerun.' }
+        try {
+            $raw = Get-Content -LiteralPath $journalPath -Raw
+            if ([string]::IsNullOrWhiteSpace($raw)) { throw 'The journal is empty.' }
+            $decoded = $raw | ConvertFrom-Json
+            # Assignment first, then foreach: portable to PowerShell 5.1/7.
+            if ($null -eq $decoded -and $raw -notmatch '^\s*\[\s*\]\s*$') { throw 'The journal contains no attempt array.' }
+            foreach ($item in $decoded) { Add-JournalEntry $item }
+        } catch {
+            if (-not $explicitStart) { throw "Cannot resume from '$journalPath': $($_.Exception.Message) Restore a valid journal, or specify -Resume -StartAt <order> for explicit recovery." }
+            $entries.Clear()
+            Write-Warning "Journal could not be read: $($_.Exception.Message) Explicit recovery will archive it and record earlier orders as skipped, without claiming verified results."
+        }
+    } elseif ($Resume -and -not $explicitStart) {
+        throw "No journal found at '$journalPath'. Use -Resume -StartAt <order> to recover from a known schedule position."
     }
-    function Save-Journal { ConvertTo-Json -InputObject @($entries) -Depth 12 | Set-Content -LiteralPath $journalPath -Encoding UTF8 }
+
+    if ($explicitStart) {
+        $prior = @($entries | Where-Object { [int]$_.order -lt $StartAt })
+        $entries.Clear()
+        foreach ($entry in $prior) { [void]$entries.Add($entry) }
+        $recorded = @{}
+        foreach ($entry in $entries) { $recorded[[int]$entry.order] = $true }
+        foreach ($job in $p.runs) {
+            if ([int]$job.order -ge $StartAt -or $recorded.ContainsKey([int]$job.order)) { continue }
+            [void]$entries.Add([pscustomobject]@{
+                order=$job.order; name=$job.name; repetition=$job.repetition
+                startedAt=$null; status='skipped_before_start'; runDirectory=$null
+                effect_verified=$null; skippedAt=(Get-Date).ToString('o')
+                error="Skipped by operator via -StartAt $StartAt; earlier run evidence was not reconstructed."
+            })
+        }
+    }
+    $recorded = @{}
+    foreach ($entry in $entries) { $recorded[[int]$entry.order] = $true }
+    $pending = @($p.runs | Where-Object { -not $recorded.ContainsKey([int]$_.order) } | Sort-Object { [int]$_.order })
+    if ($pending.Count) {
+        Write-Host "Next scheduled attempt: $($pending[0].order)/$($p.runs.Count) ($($pending.Count) remaining)."
+    } else { Write-Host 'No pending attempts remain in this campaign.' }
+    if ($PreflightOnly) { return }
+    if ($explicitStart) {
+        if (Test-Path -LiteralPath $journalPath) {
+            $archive = Join-Path (Split-Path $journalPath) ("attempts.before-start-{0}.{1}.{2}.json" -f $StartAt,(Get-Date -Format 'yyyyMMdd-HHmmss-fff'),[guid]::NewGuid().ToString('N'))
+            Copy-Item -LiteralPath $journalPath -Destination $archive
+            Write-Host "Previous journal archived: $archive"
+        }
+        Save-Journal
+        Write-Host "Explicit restart at order $StartAt; previous attempts at or after it will be rerun."
+    }
+    if (-not $pending.Count) { return }
     if (-not $SkipBootstrap) { & (Join-Path $PSScriptRoot 'Bootstrap-ETWTI.ps1') }
-    foreach ($job in $p.runs) {
-        # Scriptblock form (not `Where-Object order -eq ...`) plus an explicit
-        # property-existence guard: the property-syntax form misfires under
-        # Set-StrictMode -Version Latest on a JSON-deserialized Object[] even
-        # when every entry has the property.
-        if (@($entries | Where-Object { $_.PSObject.Properties['order'] -and $_.order -eq $job.order }).Count) { continue }
+    foreach ($job in $pending) {
         $entry = [pscustomobject]@{order=$job.order; name=$job.name; repetition=$job.repetition; startedAt=(Get-Date).ToString('o'); status='started'; runDirectory=$null; effect_verified=$null; error=$null}
-        $entries += $entry
+        [void]$entries.Add($entry)
         Save-Journal
         Write-Host "[$($job.order)/$($p.runs.Count)] $($job.name) repetition $($job.repetition)"
         try {
@@ -78,4 +181,4 @@ try {
     $entries | Group-Object status | Select-Object Name,Count | Format-Table -AutoSize
     Write-Host "Run data: $($p.runsRoot)"
     Write-Host "Journal: $journalPath"
-} finally { $lock.Dispose() }
+} finally { if ($lock) { $lock.Dispose() } }

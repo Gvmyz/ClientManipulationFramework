@@ -26,6 +26,54 @@ powershell -ExecutionPolicy Bypass -File .\experiments\Run-Experiment.ps1 -Manif
 
 The runner expects the referenced binaries to exist and resolves relative paths from the repository root.
 
+## Resuming an automated campaign
+
+Keep the original campaign `plan.json` and its frozen `manifests/` directory.
+The order printed as `[44/90]` is the `order` in that plan, not the repetition
+number or a freshly generated schedule.
+
+Normal continuation uses `attempts.json` beside the plan and skips recorded
+attempts, including failures and interrupted attempts. It does not require
+the old run folders to remain on the VM:
+
+```powershell
+.\experiments\Run-AutomatedCampaign.ps1 -Plan (Join-Path $campaign 'plan.json') -Resume
+```
+
+After losing the journal, or to explicitly retry from order 44, use:
+
+```powershell
+.\experiments\Run-AutomatedCampaign.ps1 -Plan (Join-Path $campaign 'plan.json') -Resume -StartAt 44
+```
+
+`-StartAt` is an explicit restart boundary: order 44 and all later orders
+are scheduled again, even if the old journal records an attempt there.
+An existing journal is first archived as `attempts.before-start-44.*.json`.
+Earlier records are retained when readable; missing earlier records receive
+`skipped_before_start` with unknown verification, not invented success.
+This records the scheduling decision without claiming deleted results were
+recovered. The captured data and frozen plan are not deleted or regenerated.
+
+Add `-PreflightOnly` to preview the next order without modifying the journal,
+bootstrapping telemetry, or running captures. Subsequent ordinary `-Resume`
+calls retain the skipped prefix; omit `-StartAt` unless you intend another
+explicit restart. A missing or malformed journal now stops ordinary resume
+instead of silently starting over.
+
+The runner supports both Windows PowerShell 5.1 and PowerShell 7, including
+recovery of the nested `value`/`Count` journal wrapper produced by the old
+5.1 reader. Checkpoints are written to a temporary file and replaced only
+after writing succeeds; `attempts.json.bak` holds the previous checkpoint.
+`Run-ExternalCampaign.ps1` forwards the same recovery option.
+
+The regression check uses isolated stub captures and never starts games,
+telemetry, or protected services:
+
+```powershell
+powershell.exe -NoProfile -File .\experiments\tests\Test-CampaignResume.ps1
+pwsh.exe -NoProfile -File .\experiments\tests\Test-CampaignResume.ps1
+```
+
 ## Providers
 
 A manifest declares which ETW providers Telemetry subscribes to. Two forms are supported:
